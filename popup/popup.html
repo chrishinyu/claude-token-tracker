@@ -4,12 +4,31 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Claude Token Traker</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
+/* Self-hosted fonts (MV3 CSP blocks external stylesheets) */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../fonts/inter.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Cormorant Garamond';
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('../fonts/cormorant-garamond.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/jetbrains-mono-400.woff2') format('woff2');
+}
 /* ─────────────────────────────────────────────────
-   Claude Token Traker v0.5.0
+   Claude Token Traker v0.5.1
    ───────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -23,8 +42,8 @@
 
   --text-primary:    #faf9f5;
   --text-secondary:  #a09d96;
-  --text-muted:      #8b8880;
-  --text-faint:      #706d66;
+  --text-muted:      #9f9c95;
+  --text-faint:      #918e87;
 
   --coral:           #cc785c;
   --coral-active:    #a9583e;
@@ -49,7 +68,6 @@
 
   /* Apple-style motion */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-in:  cubic-bezier(0.4, 0, 1, 1);
   --dur-enter: 220ms;
   --dur-exit:  160ms;
   --dur-value: 800ms;
@@ -88,10 +106,6 @@ body {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-@keyframes countUp {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
 @keyframes barGrow {
   from { transform: scaleX(0); }
 }
@@ -106,6 +120,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+  .anim { opacity: 1; transform: none; }
 }
 
 /* Popup entrance wrapper */
@@ -180,11 +195,6 @@ body.entering .header {
 .meter-val.ok   { color: var(--success); }
 .meter-val.warn { color: var(--warning); }
 .meter-val.bad  { color: var(--coral); }
-/* Odometer digit */
-.meter-digit {
-  display: inline-block;
-  animation: countUp 600ms var(--ease-out) forwards;
-}
 .meter-meta {
   display: flex; align-items: baseline; justify-content: space-between;
   margin-bottom: var(--sp-2);
@@ -244,14 +254,6 @@ body.entering .header {
   display: flex; align-items: center; gap: 6px;
 }
 .sec-h svg { width: 12px; height: 12px; }
-.sec-h-toggle {
-  margin-left: auto; cursor: pointer; background: none; border: none;
-  color: var(--text-muted); display: flex; align-items: center;
-  transition: color 0.15s, transform 0.2s;
-}
-.sec-h-toggle:hover { color: var(--text-secondary); }
-.sec-h-toggle svg { width: 12px; height: 12px; }
-
 /* ── Bucket rows ── */
 .sl-row {
   display: flex; align-items: center; gap: var(--sp-2);
@@ -309,7 +311,7 @@ body.entering .header {
 .extra-active-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
 .extra-active-amount {
   font-family: 'JetBrains Mono', monospace; font-size: 13px;
-  font-weight: 500; color: var(--text-primary);
+  font-weight: 400; color: var(--text-primary);
 }
 .extra-active-bar {
   width: 100%; height: 3px; background: var(--surface-card);
@@ -476,7 +478,7 @@ body.entering .header {
 </head>
 <body class="entering">
 
-<div class="header">
+<header class="header">
   <div class="brand">
     <img class="brand-logo" src="../icons/logo.svg" alt="Logo">
     <span>Claude Token Traker</span>
@@ -496,7 +498,7 @@ body.entering .header {
       </svg>
     </button>
   </div>
-</div>
+</header>
 
 <!-- Auth -->
 <div class="auth-state" id="authState" hidden>
@@ -513,12 +515,12 @@ body.entering .header {
 
   <!-- 1. Meter -->
   <div class="tile anim" id="meterTile">
-    <div class="meter-val ok" id="meterVal">--</div>
+    <div class="meter-val ok" id="meterVal" aria-live="polite">--</div>
     <div class="meter-meta">
       <span class="meter-label">5-hour window</span>
       <span class="meter-countdown" id="meterCountdown">--</span>
     </div>
-    <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+    <div class="bar-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Usage meter" id="barTrack"><div class="bar-fill" id="barFill"></div></div>
     <div class="meter-foot">
       <span id="statUsed">--</span>
       <span id="statLeft">--</span>

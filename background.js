@@ -1,5 +1,5 @@
 /**
- * Token Tracker — Background Service Worker v0.5.0
+ * Token Tracker — Background Service Worker v0.5.1
  * Polls claude.ai usage API + conversations for source intelligence.
  * 30-day snapshot retention, badge setting, daily summary support.
  */
@@ -83,11 +83,29 @@ function normalizeUsage(raw) {
     seven_day_oauth_apps: findInBoth('seven_day_oauth_apps', 'sevenDayOauthApps', '7d_oauth', 'oauth_apps'),
     seven_day_cowork:     findInBoth('seven_day_cowork', 'sevenDayCowork', '7d_cowork', 'cowork', 'claude_code', 'code'),
     extra_usage:          raw.extra_usage || raw.extraUsage || inner.extra_usage || inner.extraUsage || null,
-    _raw: raw
   };
 }
 
 // ─── Usage polling ───
+
+async function tryEndpoint(url) {
+  const resp = await fetch(url, { credentials: 'include' });
+  if (resp.status === 401 || resp.status === 403) {
+    await setAuthState(false);
+    return { auth: false };
+  }
+  if (resp.status === 404) return { skip: true };
+  if (resp.status === 429) return { rateLimit: true };
+  if (!resp.ok) return { skip: true };
+
+  await setAuthState(true);
+  const raw = await resp.json();
+  const usage = normalizeUsage(raw);
+  await storeSnapshot(usage);
+  await updateBadge(usage);
+  await chrome.storage.local.set({ working_endpoint: url });
+  return { usage };
+}
 
 async function pollUsage() {
   const orgId = await getOrgId();
@@ -99,25 +117,23 @@ async function pollUsage() {
     `https://claude.ai/api/organizations/${orgId}/settings/usage`
   ];
 
+  // Try cached endpoint first
+  try {
+    const cached = (await chrome.storage.local.get('working_endpoint')).working_endpoint;
+    if (cached && cached.includes(orgId)) {
+      const result = await tryEndpoint(cached);
+      if (result.usage) return result.usage;
+      if (result.auth === false || result.rateLimit) return null;
+    }
+  } catch (err) {
+    console.warn('[TT] Cached endpoint failed:', err.message);
+  }
+
   for (const url of endpoints) {
     try {
-      const resp = await fetch(url, { credentials: 'include' });
-
-      if (resp.status === 401 || resp.status === 403) {
-        await setAuthState(false);
-        return null;
-      }
-      if (resp.status === 404) continue;
-      if (resp.status === 429) return null;
-      if (!resp.ok) continue;
-
-      await setAuthState(true);
-      const raw = await resp.json();
-      const usage = normalizeUsage(raw);
-
-      await storeSnapshot(usage);
-      await updateBadge(usage);
-      return usage;
+      const result = await tryEndpoint(url);
+      if (result.usage) return result.usage;
+      if (result.auth === false || result.rateLimit) return null;
     } catch (err) {
       console.warn('[TT] Poll error:', err.message);
     }
@@ -127,23 +143,58 @@ async function pollUsage() {
 
 // ─── Snapshot storage ───
 
+function downsampleSnapshots(snapshots) {
+  const now = Date.now();
+  const H24 = 24 * 60 * 60 * 1000;
+  const D7 = 7 * H24;
+
+  const result = [];
+  for (const s of snapshots) {
+    const age = now - s.timestamp;
+    if (age < H24) {
+      // < 24h: keep all
+      result.push(s);
+    } else if (age < D7) {
+      // 1-7d: keep 1 per hour
+      const hourKey = Math.floor(s.timestamp / (60 * 60 * 1000));
+      if (!result._hourSeen) result._hourSeen = new Set();
+      if (!result._hourSeen.has(hourKey)) {
+        result._hourSeen.add(hourKey);
+        result.push(s);
+      }
+    } else {
+      // 7-30d: keep 1 per day
+      const dayKey = Math.floor(s.timestamp / H24);
+      if (!result._daySeen) result._daySeen = new Set();
+      if (!result._daySeen.has(dayKey)) {
+        result._daySeen.add(dayKey);
+        result.push(s);
+      }
+    }
+  }
+  delete result._hourSeen;
+  delete result._daySeen;
+  return result;
+}
+
+function compactSnapshot(usage) {
+  const snap = { timestamp: Date.now() };
+  const fields = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet',
+                  'seven_day_oauth_apps', 'seven_day_cowork', 'extra_usage'];
+  for (const f of fields) {
+    if (usage[f] != null) snap[f] = usage[f];
+  }
+  return snap;
+}
+
 async function storeSnapshot(usage) {
   const data = await chrome.storage.local.get('snapshots');
   const snapshots = data.snapshots || [];
 
-  snapshots.push({
-    timestamp: Date.now(),
-    five_hour:            usage.five_hour || null,
-    seven_day:            usage.seven_day || null,
-    seven_day_opus:       usage.seven_day_opus || null,
-    seven_day_sonnet:     usage.seven_day_sonnet || null,
-    seven_day_oauth_apps: usage.seven_day_oauth_apps || null,
-    seven_day_cowork:     usage.seven_day_cowork || null,
-    extra_usage:          usage.extra_usage || null
-  });
+  snapshots.push(compactSnapshot(usage));
 
   const cutoff = Date.now() - MAX_SNAPSHOTS_AGE_MS;
-  const pruned = snapshots.filter(s => s.timestamp > cutoff);
+  const pruned = downsampleSnapshots(snapshots.filter(s => s.timestamp > cutoff));
 
   await chrome.storage.local.set({
     snapshots: pruned,
@@ -185,113 +236,108 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 // ─── Message handler ───
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.action === 'GET_USAGE') {
-    (async () => {
-      const data = await chrome.storage.local.get(['latest_usage', 'authenticated', 'last_poll']);
-      sendResponse({
-        usage: data.latest_usage || null,
-        authenticated: data.authenticated !== false,
-        lastPoll: data.last_poll || null
-      });
-    })();
-    return true;
-  }
+const messageHandlers = {
+  async GET_USAGE() {
+    const data = await chrome.storage.local.get(['latest_usage', 'authenticated', 'last_poll']);
+    return {
+      usage: data.latest_usage || null,
+      authenticated: data.authenticated !== false,
+      lastPoll: data.last_poll || null
+    };
+  },
 
-  if (message.action === 'GET_SNAPSHOTS') {
-    (async () => {
-      const data = await chrome.storage.local.get('snapshots');
-      sendResponse({ snapshots: data.snapshots || [] });
-    })();
-    return true;
-  }
+  async GET_SNAPSHOTS() {
+    const data = await chrome.storage.local.get('snapshots');
+    return { snapshots: data.snapshots || [] };
+  },
 
-  if (message.action === 'REFRESH') {
-    pollUsage().then(usage => sendResponse({ usage }));
-    return true;
-  }
+  async REFRESH() {
+    const usage = await pollUsage();
+    return { usage };
+  },
 
-  if (message.action === 'SET_POLL_INTERVAL') {
-    (async () => {
-      await chrome.storage.local.set({ poll_interval_minutes: message.minutes });
-      await setupAlarm();
-      sendResponse({ success: true });
-    })();
-    return true;
-  }
+  async SET_POLL_INTERVAL(message) {
+    await chrome.storage.local.set({ poll_interval_minutes: message.minutes });
+    await setupAlarm();
+    return { success: true };
+  },
 
-  if (message.action === 'GET_SETTINGS') {
-    (async () => {
-      const data = await chrome.storage.local.get(['poll_interval_minutes', 'badge_enabled']);
-      sendResponse({
-        pollInterval: data.poll_interval_minutes || DEFAULT_POLL_MINUTES,
-        badgeEnabled: data.badge_enabled !== false
-      });
-    })();
-    return true;
-  }
+  async GET_SETTINGS() {
+    const data = await chrome.storage.local.get(['poll_interval_minutes', 'badge_enabled']);
+    return {
+      pollInterval: data.poll_interval_minutes || DEFAULT_POLL_MINUTES,
+      badgeEnabled: data.badge_enabled !== false
+    };
+  },
 
-  if (message.action === 'SET_BADGE_SETTING') {
-    (async () => {
-      await chrome.storage.local.set({ badge_enabled: message.enabled });
-      sendResponse({ success: true });
-    })();
-    return true;
-  }
+  async SET_BADGE_SETTING(message) {
+    await chrome.storage.local.set({ badge_enabled: message.enabled });
+    return { success: true };
+  },
 
-  if (message.action === 'DEBUG_API') {
-    (async () => {
-      const orgId = await getOrgId();
-      if (!orgId) { sendResponse({ error: 'No org ID' }); return; }
+  async DEBUG_API() {
+    const orgId = await getOrgId();
+    if (!orgId) return { error: 'No org ID' };
 
-      const endpoints = [
-        `https://claude.ai/api/organizations/${orgId}/usage`,
-        `https://claude.ai/api/organizations/${orgId}/rate_limits`,
-        `https://claude.ai/api/organizations/${orgId}/settings/usage`
-      ];
+    const endpoints = [
+      `https://claude.ai/api/organizations/${orgId}/usage`,
+      `https://claude.ai/api/organizations/${orgId}/rate_limits`,
+      `https://claude.ai/api/organizations/${orgId}/settings/usage`
+    ];
 
-      const results = {};
-      for (const url of endpoints) {
-        try {
-          const resp = await fetch(url, { credentials: 'include' });
-          const key = url.split('/').pop();
-          if (resp.ok) {
-            results[key] = await resp.json();
-          } else {
-            results[key] = { _status: resp.status, _statusText: resp.statusText };
-          }
-        } catch (err) {
-          const key = url.split('/').pop();
-          results[key] = { _error: err.message };
+    const results = {};
+    for (const url of endpoints) {
+      try {
+        const resp = await fetch(url, { credentials: 'include' });
+        const key = url.split('/').pop();
+        if (resp.ok) {
+          results[key] = await resp.json();
+        } else {
+          results[key] = { _status: resp.status, _statusText: resp.statusText };
         }
+      } catch (err) {
+        const key = url.split('/').pop();
+        results[key] = { _error: err.message };
       }
-      sendResponse(results);
-    })();
-    return true;
-  }
+    }
+    return results;
+  },
 
-  if (message.action === 'GET_DAILY_SUMMARY') {
-    (async () => {
-      const data = await chrome.storage.local.get('snapshots');
-      const snapshots = data.snapshots || [];
-      const peaks = {};
-      for (const s of snapshots) {
-        const day = new Date(s.timestamp).toISOString().slice(0, 10);
-        const u = s.five_hour?.utilization;
-        if (u == null) continue;
-        const pct = u > 1 ? u : Math.round(u * 100);
-        peaks[day] = Math.max(peaks[day] || 0, pct);
-      }
-      sendResponse({ peaks });
-    })();
-    return true;
+  async GET_DAILY_SUMMARY() {
+    const data = await chrome.storage.local.get('snapshots');
+    const snapshots = data.snapshots || [];
+    const peaks = {};
+    for (const s of snapshots) {
+      const day = new Date(s.timestamp).toISOString().slice(0, 10);
+      const u = s.five_hour?.utilization;
+      if (u == null) continue;
+      const pct = u > 1 ? u : Math.round(u * 100);
+      peaks[day] = Math.max(peaks[day] || 0, pct);
+    }
+    return { peaks };
   }
+};
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const handler = messageHandlers[message.action];
+  if (!handler) return;
+
+  (async () => {
+    try {
+      const result = await handler(message);
+      sendResponse(result);
+    } catch (err) {
+      console.error('[TT] Handler error:', message.action, err);
+      sendResponse({ error: err.message });
+    }
+  })();
+  return true;
 });
 
 // ─── Init ───
 
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Token Tracker] v0.5.0');
+  console.log('[Token Tracker] v0.5.1');
   await chrome.action.setBadgeText({ text: '—' });
   await chrome.action.setBadgeBackgroundColor({ color: '#64748B' });
   await setupAlarm();

@@ -1,5 +1,5 @@
 /**
- * Claude Token Traker — Popup v0.5.0
+ * Claude Token Traker — Popup v0.5.1
  * Source breakdown · Model advisor · Enhanced weekly trend · SVG icons
  * Apple-style microinteractions
  */
@@ -22,9 +22,6 @@ const ICONS = {
   shield:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
   lightbulb:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z"/></svg>',
   repeat:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>',
-  messageCircle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z"/></svg>',
-  code:          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
-  globe:         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>',
   externalLink:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
 };
 
@@ -92,16 +89,12 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 let animFrameId = null;
 
 function animateCountUp(el, target, duration) {
-  if (prefersReducedMotion) { el.textContent = `${target}%`; return; }
+  if (prefersReducedMotion) { el.textContent = target + '%'; return; }
   const start = performance.now();
   function tick(now) {
     const t = Math.min((now - start) / duration, 1);
-    // Ease-out cubic
     const eased = 1 - Math.pow(1 - t, 3);
-    const val = Math.round(eased * target);
-    el.innerHTML = `${val}%`.split('').map(ch =>
-      `<span class="meter-digit" style="animation-delay:${Math.random() * 40}ms">${ch}</span>`
-    ).join('');
+    el.textContent = Math.round(eased * target) + '%';
     if (t < 1) animFrameId = requestAnimationFrame(tick);
   }
   if (animFrameId) cancelAnimationFrame(animFrameId);
@@ -187,6 +180,10 @@ async function render(isRefresh) {
 
     // Animated count-up
     animateCountUp(mv, pct, 800);
+
+    // Update ARIA on meter bar
+    const barTrack = $('barTrack');
+    if (barTrack) barTrack.setAttribute('aria-valuenow', pct);
 
     // Animated bar fill
     const bf = $('barFill');
@@ -496,21 +493,26 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
     bar.className = `spark-bar${isToday ? ' today' : ''}${isSel ? ' selected' : ''}`;
     bar.style.height = `${h}%`;
     bar.style.backgroundColor = severityColor(d.pct);
-    // Today: full opacity, estimated: 35%, past real data: 55%
     bar.style.opacity = d.estimated ? '0.35' : (isToday ? '1' : '0.55');
     bar.title = d.estimated
       ? `${d.day}: ~${d.pct}% (estimated)`
       : `${d.day}: ${d.pct}%`;
+    bar.setAttribute('role', 'button');
+    bar.setAttribute('tabindex', '0');
+    bar.setAttribute('aria-label', `${dayName(d.day)} ${d.pct}%${d.estimated ? ' estimated' : ''}`);
 
-    // Staggered rise animation — only on initial render, not on click
     if (!prefersReducedMotion && !skipAnim) {
       bar.classList.add('rise');
       bar.style.animationDelay = `${i * 70}ms`;
     }
 
-    bar.addEventListener('click', () => {
+    const toggleDay = () => {
       selectedDay = selectedDay === d.day ? null : d.day;
       renderWeeklyTrend(allSnapshots, latestUsage, true);
+    };
+    bar.addEventListener('click', toggleDay);
+    bar.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleDay(); }
     });
     barsEl.appendChild(bar);
 
@@ -520,6 +522,11 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
     if (isSel) lbl.className = 'selected';
     daysEl.appendChild(lbl);
   });
+
+  // Set sparkline ARIA summary
+  const sparkContainer = barsEl.parentElement;
+  const summaryParts = dayData.filter(d => d.pct > 0).map(d => `${dayName(d.day)} ${d.pct}%`);
+  if (sparkContainer) sparkContainer.setAttribute('aria-label', 'Weekly trend: ' + (summaryParts.length ? summaryParts.join(', ') : 'no data'));
 
   // Stats row
   const withUsage = dayData.filter(d => d.pct > 0);

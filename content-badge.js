@@ -1,5 +1,5 @@
 /**
- * Token Tracker — Content Badge v0.5.0
+ * Token Tracker — Content Badge v0.5.1
  * Floating usage badge on claude.ai with shadow DOM isolation.
  */
 
@@ -45,6 +45,9 @@
       border-radius: 50%;
       background: currentColor;
     }
+    @media (prefers-reduced-motion: reduce) {
+      .tt-badge--pulse { animation: none; }
+    }
     @media (prefers-color-scheme: dark) {
       .tt-badge--green { background: #1e2e12; color: #7ab648; }
       .tt-badge--amber { background: #2e2410; color: #d4a53a; }
@@ -58,7 +61,7 @@
   badge.innerHTML = '<div class="tt-dot"></div><span class="tt-pct"></span>';
   shadow.appendChild(badge);
 
-  document.body.appendChild(host);
+  (document.body || document.documentElement).appendChild(host);
 
   function update(usage, enabled) {
     if (!enabled || !usage || usage.pct == null) {
@@ -96,6 +99,7 @@
 
   // Listen for changes
   chrome.storage.onChanged.addListener((changes) => {
+    if (!chrome.runtime?.id) return;
     if (changes.latest_usage || changes.badge_enabled) {
       chrome.storage.local.get(['latest_usage', 'badge_enabled'], (result) => {
         const usage = result.latest_usage;
