@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Token Traker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* ─────────────────────────────────────────────────
+   Claude Token Traker v0.5.0
+   ───────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --surface-dark:          #181715;
+  --surface-dark-elevated: #252320;
+  --surface-dark-soft:     #1f1e1b;
+  --surface-card:          #2a2826;
+  --hairline:              #3d3a36;
+  --hairline-soft:         #322f2b;
+
+  --text-primary:    #faf9f5;
+  --text-secondary:  #a09d96;
+  --text-muted:      #8b8880;
+  --text-faint:      #706d66;
+
+  --coral:           #cc785c;
+  --coral-active:    #a9583e;
+  --coral-glow:      rgba(204,120,92,0.12);
+
+  --success:         #5db872;
+  --success-soft:    rgba(93,184,114,0.10);
+  --warning:         #d4a017;
+  --warning-soft:    rgba(212,160,23,0.08);
+  --error:           #c64545;
+  --error-soft:      rgba(198,69,69,0.08);
+  --info:            #5db8a6;
+
+  --opus:    #b794f6;
+  --sonnet:  #78a9ff;
+  --overall: #5db872;
+  --oauth:   #e8a55a;
+  --cowork:  #f2a0c4;
+
+  --r-sm: 6px; --r-md: 8px; --r-lg: 12px;
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  /* Apple-style motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in:  cubic-bezier(0.4, 0, 1, 1);
+  --dur-enter: 220ms;
+  --dur-exit:  160ms;
+  --dur-value: 800ms;
+  --stagger:   60ms;
+}
+
+body {
+  width: 360px;
+  background: var(--surface-dark);
+  color: var(--text-primary);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.scroll-area {
+  max-height: 520px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.scroll-area::-webkit-scrollbar { display: none; }
+
+/* ── Apple-style entrance animations ── */
+@keyframes popupEntrance {
+  from { opacity: 0; transform: translateY(5px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes barGrow {
+  from { transform: scaleX(0); }
+}
+@keyframes barRise {
+  from { transform: scaleY(0); }
+}
+@keyframes dimPulse {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* Popup entrance wrapper */
+body.entering .scroll-area,
+body.entering .header {
+  animation: popupEntrance var(--dur-enter) var(--ease-out) forwards;
+}
+
+/* Section stagger */
+.anim {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.anim.reveal {
+  animation: fadeUp var(--dur-enter) var(--ease-out) forwards;
+}
+
+/* Refresh dimming */
+.refreshing .content { animation: dimPulse 600ms ease; }
+
+/* ── Header ── */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  height: 44px; padding: 0 var(--sp-4);
+  background: var(--surface-dark-elevated);
+  border-bottom: 1px solid var(--hairline-soft);
+}
+.brand { display: flex; align-items: center; gap: var(--sp-2); }
+.brand-logo {
+  width: 20px; height: 20px; border-radius: 0;
+  object-fit: contain;
+}
+.brand span {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 15px; font-weight: 400; letter-spacing: -0.3px;
+  color: var(--text-primary);
+}
+.hdr-actions { display: flex; }
+.hdr-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px;
+  background: transparent; border: none; border-radius: 9999px;
+  color: var(--text-muted); cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.hdr-btn:hover { color: var(--text-primary); background: var(--surface-dark-soft); }
+.hdr-btn:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
+.hdr-btn.active { color: var(--coral); background: var(--coral-glow); }
+.hdr-btn.spin svg { animation: spinOnce 500ms var(--ease-out); }
+@keyframes spinOnce {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Content ── */
+.content { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
+
+/* ── Tile ── */
+.tile {
+  background: var(--surface-dark-elevated);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+}
+
+/* ── Meter ── */
+.meter-val {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 42px; font-weight: 400; line-height: 1; letter-spacing: -1px;
+  margin-bottom: var(--sp-1);
+  overflow: hidden;
+}
+.meter-val.ok   { color: var(--success); }
+.meter-val.warn { color: var(--warning); }
+.meter-val.bad  { color: var(--coral); }
+/* Odometer digit */
+.meter-digit {
+  display: inline-block;
+  animation: countUp 600ms var(--ease-out) forwards;
+}
+.meter-meta {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: var(--sp-2);
+}
+.meter-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.meter-countdown {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted);
+}
+.bar-track {
+  width: 100%; height: 5px; background: var(--surface-card);
+  border-radius: 3px; overflow: hidden; margin-bottom: var(--sp-2);
+}
+.bar-fill {
+  height: 100%; border-radius: 3px; background: var(--success);
+  transform: scaleX(0); transform-origin: left;
+  transition: transform var(--dur-value) var(--ease-out), background-color 0.3s;
+}
+.bar-fill.animate {
+  animation: barGrow var(--dur-value) var(--ease-out) forwards;
+}
+.meter-foot {
+  display: flex; justify-content: space-between;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted);
+}
+
+/* ── Smart actions ── */
+.actions { display: flex; flex-direction: column; gap: var(--sp-2); }
+.action-card {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface-dark-elevated);
+  border-radius: var(--r-md);
+  border-left: 3px solid var(--info);
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  text-decoration: none;
+}
+.action-card:hover { background: var(--surface-card); }
+.action-card:active { transform: scale(0.985); }
+.action-icon {
+  width: 28px; height: 28px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.action-icon svg { width: 14px; height: 14px; color: var(--text-muted); }
+.action-body { flex: 1; min-width: 0; }
+.action-title { font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 1px; }
+.action-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+.action-card.warn  { border-color: var(--warning); }
+.action-card.good  { border-color: var(--success); }
+.action-card.coral { border-color: var(--coral); }
+
+/* ── Section heading ── */
+.sec-h {
+  font-size: 11px; font-weight: 500; color: var(--text-muted);
+  letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: var(--sp-1);
+  display: flex; align-items: center; gap: 6px;
+}
+.sec-h svg { width: 12px; height: 12px; }
+.sec-h-toggle {
+  margin-left: auto; cursor: pointer; background: none; border: none;
+  color: var(--text-muted); display: flex; align-items: center;
+  transition: color 0.15s, transform 0.2s;
+}
+.sec-h-toggle:hover { color: var(--text-secondary); }
+.sec-h-toggle svg { width: 12px; height: 12px; }
+
+/* ── Bucket rows ── */
+.sl-row {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 5px 0; border-bottom: 1px solid var(--hairline-soft);
+}
+.sl-row:last-child { border-bottom: none; }
+.sl-pip { width: 3px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+.sl-name { flex: 1; font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sl-pct {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+  min-width: 30px; text-align: right; flex-shrink: 0;
+}
+.sl-track { width: 40px; height: 3px; background: var(--surface-card); border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+.sl-fill { height: 100%; border-radius: 2px; transform-origin: left; }
+.sl-fill.animate { animation: barGrow var(--dur-value) var(--ease-out) forwards; }
+
+/* ── Model advisor ── */
+.advisor-banner {
+  display: flex; align-items: flex-start; gap: var(--sp-2);
+  padding: var(--sp-3); border-radius: var(--r-md);
+  font-size: 11px; line-height: 1.45; margin-bottom: var(--sp-2);
+}
+.advisor-banner svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; color: var(--text-muted); }
+.advisor-banner.urgent { background: var(--error-soft); color: var(--coral); }
+.advisor-banner.suggest { background: var(--warning-soft); color: var(--warning); }
+.advisor-compare {
+  display: flex; align-items: center; gap: var(--sp-2);
+  padding: 3px 0; font-size: 11px;
+}
+.advisor-model { width: 54px; font-size: 11px; color: var(--text-secondary); flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.advisor-bar-track { flex: 1; height: 3px; background: var(--surface-card); border-radius: 2px; overflow: hidden; }
+.advisor-bar-fill { height: 100%; border-radius: 2px; transform-origin: left; }
+.advisor-bar-fill.animate { animation: barGrow var(--dur-value) var(--ease-out) forwards; }
+.advisor-pct {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-muted); min-width: 28px; text-align: right; flex-shrink: 0;
+}
+.advisor-link {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 10px; color: var(--info); text-decoration: none;
+  margin-top: var(--sp-1);
+}
+.advisor-link:hover { text-decoration: underline; }
+.advisor-link svg { width: 10px; height: 10px; color: var(--text-faint); }
+
+/* ── Extra credits ── */
+.extra-active {
+  background: var(--surface-dark-elevated); border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4); border-left: 3px solid var(--oauth);
+}
+.extra-active-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-2);
+}
+.extra-active-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+.extra-active-amount {
+  font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  font-weight: 500; color: var(--text-primary);
+}
+.extra-active-bar {
+  width: 100%; height: 3px; background: var(--surface-card);
+  border-radius: 2px; overflow: hidden; margin-bottom: var(--sp-1);
+}
+.extra-active-fill { height: 100%; border-radius: 2px; background: var(--oauth); transform-origin: left; }
+.extra-active-fill.animate { animation: barGrow var(--dur-value) var(--ease-out) forwards; }
+.extra-active-foot {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-muted); text-align: right;
+}
+
+.extra-off {
+  display: flex; align-items: center; gap: var(--sp-3);
+  background: var(--surface-dark-elevated); border-radius: var(--r-md);
+  padding: var(--sp-3) var(--sp-4); border-left: 3px solid var(--text-faint);
+  cursor: pointer; transition: background 0.15s; text-decoration: none;
+}
+.extra-off:hover { background: var(--surface-card); }
+.extra-off-icon {
+  width: 28px; height: 28px; border-radius: 8px;
+  background: var(--surface-card); display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.extra-off-icon svg { width: 14px; height: 14px; color: var(--oauth); }
+.extra-off-body { flex: 1; }
+.extra-off-title { font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 1px; }
+.extra-off-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
+
+/* ── Trend (enhanced sparkline) ── */
+.spark-container { position: relative; }
+.spark-bars { display: flex; align-items: flex-end; gap: 3px; height: 32px; }
+.spark-bar {
+  flex: 1; border-radius: 2px 2px 0 0;
+  min-height: 2px; cursor: pointer; transition: opacity 0.15s;
+  transform-origin: bottom;
+}
+.spark-bar.rise { animation: barRise var(--dur-value) var(--ease-out) forwards; }
+.spark-bar:hover { opacity: 0.8; }
+.spark-bar.today { border-bottom: 2px solid var(--info); }
+.spark-bar.selected { outline: 1px solid var(--coral); outline-offset: 1px; }
+.spark-days { display: flex; justify-content: space-between; margin-top: 3px; }
+.spark-days span {
+  flex: 1; text-align: center;
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--text-faint);
+}
+.spark-days span.today { color: var(--info); font-weight: 500; }
+.spark-days span.selected { color: var(--coral); }
+
+.trend-stats {
+  display: flex; gap: var(--sp-3); margin-top: var(--sp-2);
+  font-size: 10px;
+}
+.trend-stats .label { color: var(--text-faint); }
+.trend-stats .val { font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); }
+.trend-stats .val.green { color: var(--success); }
+.trend-stats .val.amber { color: var(--warning); }
+.trend-stats .val.coral { color: var(--coral); }
+.trend-insight {
+  font-size: 10px; color: var(--text-faint); font-style: italic;
+  margin-top: var(--sp-1);
+}
+.export-btn {
+  display: flex; align-items: center; gap: 4px;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-muted); font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  padding: 2px 0; transition: color 0.15s;
+}
+.export-btn:hover { color: var(--text-secondary); }
+.export-btn svg { width: 12px; height: 12px; }
+
+/* ── Day detail (hourly curve) ── */
+.day-detail {
+  margin-top: var(--sp-2);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--hairline-soft);
+  animation: fadeUp 200ms var(--ease-out) forwards;
+}
+.day-detail-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-1);
+}
+.day-detail-date { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+.day-detail-peak {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted);
+}
+.hourly-bars { display: flex; align-items: flex-end; gap: 1px; height: 20px; }
+.hourly-bar {
+  flex: 1; background: var(--hairline-soft); border-radius: 1px 1px 0 0; min-height: 1px;
+  transform-origin: bottom;
+}
+.hourly-bar.active { background: var(--coral); }
+.hourly-bar.estimated { background: var(--text-faint); }
+.hourly-bar.rise { animation: barRise 600ms var(--ease-out) forwards; }
+.hourly-labels { display: flex; justify-content: space-between; margin-top: 2px; }
+.hourly-labels span {
+  font-family: 'JetBrains Mono', monospace; font-size: 8px; color: var(--text-faint);
+}
+
+/* ── Settings ── */
+.settings-drawer {
+  background: var(--surface-dark-elevated); border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-4);
+  animation: fadeUp 200ms var(--ease-out) forwards;
+}
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 0;
+}
+.settings-label { font-size: 12px; color: var(--text-secondary); }
+.settings-select {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  background: var(--surface-dark); color: var(--text-primary);
+  border: 1px solid var(--hairline); border-radius: var(--r-sm);
+  padding: 3px 6px; outline: none; cursor: pointer;
+}
+.settings-select:focus { border-color: var(--coral); }
+.settings-toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-secondary); cursor: pointer;
+}
+.settings-toggle input[type="checkbox"] {
+  accent-color: var(--coral); cursor: pointer;
+}
+.settings-hint {
+  font-size: 10px; color: var(--text-faint); margin-top: 2px; padding-left: 20px;
+}
+.debug-output {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-dark);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-sm);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--text-secondary);
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Auth / Empty ── */
+.auth-state, .empty-state {
+  text-align: center; padding: var(--sp-6) var(--sp-5);
+  animation: fadeIn 0.35s ease forwards;
+}
+.auth-state svg { margin-bottom: var(--sp-3); color: var(--coral); }
+.empty-state svg { margin-bottom: var(--sp-3); color: var(--text-faint); }
+.state-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 18px; font-weight: 400; letter-spacing: -0.3px;
+  color: var(--text-primary); margin-bottom: var(--sp-1);
+}
+.state-body { font-size: 12px; color: var(--text-muted); line-height: 1.55; }
+
+/* ── Footer ── */
+.poll-foot {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  color: var(--text-faint); text-align: right;
+  padding: var(--sp-1) var(--sp-4) var(--sp-2);
+}
+</style>
+</head>
+<body class="entering">
+
+<div class="header">
+  <div class="brand">
+    <img class="brand-logo" src="../icons/logo.svg" alt="Logo">
+    <span>Claude Token Traker</span>
+  </div>
+  <div class="hdr-actions">
+    <button class="hdr-btn" id="btnRefresh" title="Refresh">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+    </button>
+    <button class="hdr-btn" id="btnSettings" title="Settings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
+        <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
+        <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
+        <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<!-- Auth -->
+<div class="auth-state" id="authState" hidden>
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+  </svg>
+  <div class="state-title">Not authenticated</div>
+  <div class="state-body">Log in to claude.ai, then click refresh.</div>
+</div>
+
+<!-- Main -->
+<div class="scroll-area" id="mainContent">
+<div class="content">
+
+  <!-- 1. Meter -->
+  <div class="tile anim" id="meterTile">
+    <div class="meter-val ok" id="meterVal">--</div>
+    <div class="meter-meta">
+      <span class="meter-label">5-hour window</span>
+      <span class="meter-countdown" id="meterCountdown">--</span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="barFill"></div></div>
+    <div class="meter-foot">
+      <span id="statUsed">--</span>
+      <span id="statLeft">--</span>
+    </div>
+  </div>
+
+  <!-- 2. Smart actions -->
+  <div class="actions anim" id="actionsSection" hidden></div>
+
+  <!-- 3. Model advisor -->
+  <div class="anim" id="advisorSection" hidden>
+    <div class="sec-h">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      Model advisor
+    </div>
+    <div class="tile" style="padding:var(--sp-3)" id="advisorContent"></div>
+  </div>
+
+  <!-- 5. Usage buckets -->
+  <div class="anim" id="bucketsSection" hidden>
+    <div class="sec-h">Usage buckets</div>
+    <div class="tile" style="padding:var(--sp-3)"><div id="bucketsList"></div></div>
+  </div>
+
+  <!-- 6. Extra credits -->
+  <div class="anim" id="extraSection" hidden>
+    <div id="extraContent"></div>
+  </div>
+
+  <!-- 7. Weekly trend -->
+  <div class="anim" id="sparkSection">
+    <div class="sec-h">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+      Weekly trend
+      <button class="export-btn" id="btnExport" title="Export CSV (30 days)" style="margin-left:auto">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        CSV
+      </button>
+    </div>
+    <div class="tile" style="padding:var(--sp-3)">
+      <div class="spark-container">
+        <div class="spark-bars" id="sparkBars"></div>
+        <div class="spark-days" id="sparkDays"></div>
+        <div class="trend-stats" id="trendStats"></div>
+        <div class="trend-insight" id="trendInsight"></div>
+        <div id="dayDetail"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. Settings -->
+  <div class="settings-drawer" id="settingsPanel" hidden>
+    <div class="sec-h" style="margin-bottom:var(--sp-2)">Settings</div>
+    <div class="settings-row">
+      <span class="settings-label">Poll interval</span>
+      <select class="settings-select" id="pollSelect">
+        <option value="2">2 min</option>
+        <option value="5">5 min</option>
+        <option value="15">15 min</option>
+      </select>
+    </div>
+    <div class="settings-row" style="margin-top:var(--sp-2)">
+      <label class="settings-toggle">
+        <input type="checkbox" id="badgeToggle" checked>
+        Show badge on claude.ai
+      </label>
+    </div>
+    <div class="settings-hint">Floating usage % on claude.ai pages</div>
+    <div class="settings-row" style="margin-top:var(--sp-3)">
+      <span class="settings-label">Debug API</span>
+      <button class="settings-select" id="btnDebug" style="cursor:pointer">Show raw JSON</button>
+    </div>
+    <pre class="debug-output" id="debugOutput" hidden></pre>
+  </div>
+
+  <!-- Empty -->
+  <div class="empty-state" id="emptyState" hidden>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+    <div class="state-title">Waiting for data</div>
+    <div class="state-body">Polling claude.ai...</div>
+  </div>
+
+</div>
+</div>
+
+<div class="poll-foot" id="pollFoot"></div>
+
+<script src="popup.js"></script>
+</body>
+</html>
