@@ -1,5 +1,5 @@
 /**
- * Token Tracker — Content Badge v0.5.1
+ * Token Tracker — Content Badge v0.5.2
  * Floating usage badge on claude.ai with shadow DOM isolation.
  */
 
