@@ -1,10 +1,11 @@
 /**
- * Token Tracker — Background Service Worker v0.5.1
+ * Token Tracker — Background Service Worker v0.5.2
  * Polls claude.ai usage API + conversations for source intelligence.
  * 30-day snapshot retention, badge setting, daily summary support.
+ * Threshold notifications, API breakage detection, exponential backoff.
  */
 
-const DEFAULT_POLL_MINUTES = 2;
+const DEFAULT_POLL_MINUTES = 5;
 const ALARM_POLL = 'usage_poll';
 const MAX_SNAPSHOTS_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -86,6 +87,45 @@ function normalizeUsage(raw) {
   };
 }
 
+// ─── Reset time helper ───
+
+function resetTime(r) {
+  if (!r) return null;
+  const t = typeof r === 'number' ? (r < 1e12 ? r * 1000 : r) : new Date(r).getTime();
+  const d = t - Date.now();
+  if (d <= 0) return '0h 0m';
+  return `${Math.floor(d / 36e5)}h ${Math.floor((d % 36e5) / 6e4)}m`;
+}
+
+// ─── Threshold notifications ───
+
+async function checkThresholds(usage) {
+  const util = usage?.five_hour?.utilization;
+  if (util == null) return;
+  const pct = util > 1 ? Math.round(util) : Math.round(util * 100);
+  const { last_notified_pct = 0, notify_enabled } = await chrome.storage.local.get(['last_notified_pct', 'notify_enabled']);
+  if (notify_enabled === false) return;
+
+  const thresholds = [95, 80];
+  for (const t of thresholds) {
+    if (pct >= t && last_notified_pct < t) {
+      const rt = usage.five_hour?.resets_at;
+      const resetStr = rt ? resetTime(rt) : '';
+      chrome.notifications.create(`tt-threshold-${t}`, {
+        type: 'basic', iconUrl: 'icons/icon128.png',
+        title: `Claude usage at ${pct}%`,
+        message: t >= 95 ? 'Near limit — save heavy tasks for after reset' :
+          resetStr ? `Resets in ${resetStr}` : 'Consider switching to a lighter model'
+      });
+      await chrome.storage.local.set({ last_notified_pct: pct });
+      return;
+    }
+  }
+  if (pct < 50 && last_notified_pct >= 50) {
+    await chrome.storage.local.set({ last_notified_pct: 0 });
+  }
+}
+
 // ─── Usage polling ───
 
 async function tryEndpoint(url) {
@@ -99,10 +139,17 @@ async function tryEndpoint(url) {
   if (!resp.ok) return { skip: true };
 
   await setAuthState(true);
-  const raw = await resp.json();
+  let raw;
+  try {
+    raw = await resp.json();
+  } catch (e) {
+    console.warn('[TT] JSON parse failed:', e.message);
+    return { skip: true };
+  }
   const usage = normalizeUsage(raw);
   await storeSnapshot(usage);
   await updateBadge(usage);
+  await checkThresholds(usage);
   await chrome.storage.local.set({ working_endpoint: url });
   return { usage };
 }
@@ -117,12 +164,18 @@ async function pollUsage() {
     `https://claude.ai/api/organizations/${orgId}/settings/usage`
   ];
 
+  let authFailure = false;
+
   // Try cached endpoint first
   try {
     const cached = (await chrome.storage.local.get('working_endpoint')).working_endpoint;
     if (cached && cached.includes(orgId)) {
       const result = await tryEndpoint(cached);
-      if (result.usage) return result.usage;
+      if (result.usage) {
+        await onPollSuccess();
+        return result.usage;
+      }
+      if (result.auth === false) { authFailure = true; }
       if (result.auth === false || result.rateLimit) return null;
     }
   } catch (err) {
@@ -132,13 +185,38 @@ async function pollUsage() {
   for (const url of endpoints) {
     try {
       const result = await tryEndpoint(url);
-      if (result.usage) return result.usage;
+      if (result.usage) {
+        await onPollSuccess();
+        return result.usage;
+      }
+      if (result.auth === false) { authFailure = true; }
       if (result.auth === false || result.rateLimit) return null;
     } catch (err) {
       console.warn('[TT] Poll error:', err.message);
     }
   }
+
+  // All endpoints failed — track failures for breakage detection + backoff
+  if (!authFailure) {
+    const { poll_failures = 0 } = await chrome.storage.local.get('poll_failures');
+    const newFailures = poll_failures + 1;
+    const apiStatus = newFailures >= 3 ? 'broken' : 'ok';
+    await chrome.storage.local.set({ poll_failures: newFailures, api_status: apiStatus });
+
+    // Exponential backoff: base → base*2 → base*4 → cap at 30
+    const { poll_interval_minutes } = await chrome.storage.local.get('poll_interval_minutes');
+    const base = poll_interval_minutes || DEFAULT_POLL_MINUTES;
+    const backoff = Math.min(base * Math.pow(2, newFailures), 30);
+    await chrome.alarms.clear(ALARM_POLL);
+    await chrome.alarms.create(ALARM_POLL, { periodInMinutes: backoff });
+  }
+
   return null;
+}
+
+async function onPollSuccess() {
+  await chrome.storage.local.set({ poll_failures: 0, api_status: 'ok' });
+  await setupAlarm();
 }
 
 // ─── Snapshot storage ───
@@ -201,6 +279,52 @@ async function storeSnapshot(usage) {
     latest_usage: usage,
     last_poll: Date.now()
   });
+
+  // Flush to disk for CLI companion
+  flushToDisk(usage);
+}
+
+// ─── HTTP bridge: write usage.json to disk via local daemon ───
+
+const TT_SERVER = 'http://127.0.0.1:9898/update';
+
+function flushToDisk(usage) {
+  try {
+    const fiveHour = usage.five_hour || {};
+    const sevenDay = usage.seven_day || {};
+    const opus = usage.seven_day_opus || {};
+    const sonnet = usage.seven_day_sonnet || {};
+    const cowork = usage.seven_day_cowork || {};
+
+    const payload = {
+      version: 1,
+      updated_at: Date.now(),
+      five_hour: {
+        utilization: fiveHour.utilization ?? null,
+        resets_at: fiveHour.resets_at ?? null,
+        reset_in: resetTime(fiveHour.resets_at)
+      },
+      seven_day: {
+        utilization: sevenDay.utilization ?? null,
+        resets_at: sevenDay.resets_at ?? null,
+        reset_in: resetTime(sevenDay.resets_at)
+      },
+      models: {
+        opus: { utilization: opus.utilization ?? null, resets_at: opus.resets_at ?? null },
+        sonnet: { utilization: sonnet.utilization ?? null, resets_at: sonnet.resets_at ?? null },
+        cowork: { utilization: cowork.utilization ?? null, resets_at: cowork.resets_at ?? null }
+      },
+      extra_usage: usage.extra_usage ?? null
+    };
+
+    fetch(TT_SERVER, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(() => {}); // daemon not running — silently ignore
+  } catch {
+    // no-op
+  }
 }
 
 // ─── Badge ───
@@ -238,11 +362,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
 const messageHandlers = {
   async GET_USAGE() {
-    const data = await chrome.storage.local.get(['latest_usage', 'authenticated', 'last_poll']);
+    const data = await chrome.storage.local.get(['latest_usage', 'authenticated', 'last_poll', 'api_status']);
     return {
       usage: data.latest_usage || null,
       authenticated: data.authenticated !== false,
-      lastPoll: data.last_poll || null
+      lastPoll: data.last_poll || null,
+      apiStatus: data.api_status || 'ok'
     };
   },
 
@@ -263,15 +388,22 @@ const messageHandlers = {
   },
 
   async GET_SETTINGS() {
-    const data = await chrome.storage.local.get(['poll_interval_minutes', 'badge_enabled']);
+    const data = await chrome.storage.local.get(['poll_interval_minutes', 'badge_enabled', 'notify_enabled', 'install_date']);
     return {
       pollInterval: data.poll_interval_minutes || DEFAULT_POLL_MINUTES,
-      badgeEnabled: data.badge_enabled !== false
+      badgeEnabled: data.badge_enabled !== false,
+      notifyEnabled: data.notify_enabled !== false,
+      installDate: data.install_date || null
     };
   },
 
   async SET_BADGE_SETTING(message) {
     await chrome.storage.local.set({ badge_enabled: message.enabled });
+    return { success: true };
+  },
+
+  async SET_NOTIFY_SETTING(message) {
+    await chrome.storage.local.set({ notify_enabled: message.enabled });
     return { success: true };
   },
 
@@ -301,6 +433,12 @@ const messageHandlers = {
       }
     }
     return results;
+  },
+
+  async EXPORT_FOR_CLI() {
+    const data = await chrome.storage.local.get('latest_usage');
+    if (data.latest_usage) flushToDisk(data.latest_usage);
+    return { success: true };
   },
 
   async GET_DAILY_SUMMARY() {
@@ -337,7 +475,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // ─── Init ───
 
 chrome.runtime.onInstalled.addListener(async () => {
-  console.log('[Token Tracker] v0.5.1');
+  console.log('[Token Tracker] v0.5.2');
+  // Store install date only on first install
+  const { install_date } = await chrome.storage.local.get('install_date');
+  if (!install_date) {
+    await chrome.storage.local.set({ install_date: Date.now() });
+  }
   await chrome.action.setBadgeText({ text: '—' });
   await chrome.action.setBadgeBackgroundColor({ color: '#64748B' });
   await setupAlarm();
