@@ -1,7 +1,7 @@
 {
   "name": "com.token_tracker.bridge",
   "description": "Token Tracker filesystem bridge — writes usage data to ~/.token-tracker/usage.json",
-  "path": "/Users/christy_macair/Downloads/token-tracker-extension/tt-bridge/host.js",
+  "path": "/Users/christy_macair/Work/Building/token-tracker-extension/tt-bridge/host.js",
   "type": "stdio",
   "allowed_origins": []
 }

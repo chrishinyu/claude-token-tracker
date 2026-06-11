@@ -100,7 +100,7 @@ To start it automatically whenever you open a new terminal, add this to your `~/
 ```bash
 # Claude token tracker bridge
 if ! curl -sf http://127.0.0.1:9898/health > /dev/null 2>&1; then
-  node ~/Downloads/token-tracker-extension/tt-bridge/tt-server.js &> /tmp/tt-server.log &
+  node ~/Work/Building/token-tracker-extension/tt-bridge/tt-server.js &> /tmp/tt-server.log &
 fi
 ```
 
