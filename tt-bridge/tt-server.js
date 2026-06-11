@@ -7,11 +7,12 @@ const path = require("path")
 const os = require("os")
 
 const USAGE_FILE = path.join(os.homedir(), ".token-tracker", "usage.json")
+const SNAPSHOTS_FILE = path.join(os.homedir(), ".token-tracker", "snapshots.json")
 const PORT = 9898
 
 http.createServer((req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*")
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS")
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
   res.setHeader("Access-Control-Allow-Headers", "Content-Type")
 
   if (req.method === "OPTIONS") {
@@ -34,6 +35,35 @@ http.createServer((req, res) => {
         res.end(e.message)
       }
     })
+    return
+  }
+
+  if (req.method === "POST" && req.url === "/snapshots") {
+    let body = ""
+    req.on("data", d => body += d)
+    req.on("end", () => {
+      try {
+        fs.mkdirSync(path.dirname(SNAPSHOTS_FILE), { recursive: true })
+        fs.writeFileSync(SNAPSHOTS_FILE, body)
+        res.writeHead(200)
+        res.end("ok")
+      } catch (e) {
+        res.writeHead(500)
+        res.end(e.message)
+      }
+    })
+    return
+  }
+
+  if (req.method === "GET" && req.url === "/snapshots") {
+    try {
+      const data = fs.readFileSync(SNAPSHOTS_FILE, "utf8")
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(data)
+    } catch (e) {
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end("[]")
+    }
     return
   }
 

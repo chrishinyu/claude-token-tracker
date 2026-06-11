@@ -280,13 +280,15 @@ async function storeSnapshot(usage) {
     last_poll: Date.now()
   });
 
-  // Flush to disk for CLI companion
+  // Flush to disk for CLI companion and snapshot persistence
   flushToDisk(usage);
+  flushSnapshotsToDisk(pruned);
 }
 
-// ─── HTTP bridge: write usage.json to disk via local daemon ───
+// ─── HTTP bridge: write usage.json + snapshots.json to disk via local daemon ───
 
 const TT_SERVER = 'http://127.0.0.1:9898/update';
+const TT_SNAPSHOTS = 'http://127.0.0.1:9898/snapshots';
 
 function flushToDisk(usage) {
   try {
@@ -324,6 +326,31 @@ function flushToDisk(usage) {
     }).catch(() => {}); // daemon not running — silently ignore
   } catch {
     // no-op
+  }
+}
+
+function flushSnapshotsToDisk(snapshots) {
+  fetch(TT_SNAPSHOTS, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(snapshots)
+  }).catch(() => {});
+}
+
+async function restoreSnapshotsFromDisk() {
+  try {
+    const existing = await chrome.storage.local.get('snapshots');
+    if (existing.snapshots && existing.snapshots.length > 0) return; // already have data
+
+    const resp = await fetch(TT_SNAPSHOTS);
+    if (!resp.ok) return;
+    const snapshots = await resp.json();
+    if (Array.isArray(snapshots) && snapshots.length > 0) {
+      await chrome.storage.local.set({ snapshots });
+      console.log(`[TT] Restored ${snapshots.length} snapshots from disk`);
+    }
+  } catch {
+    // daemon not running — silently ignore
   }
 }
 
@@ -483,11 +510,13 @@ chrome.runtime.onInstalled.addListener(async () => {
   }
   await chrome.action.setBadgeText({ text: '—' });
   await chrome.action.setBadgeBackgroundColor({ color: '#64748B' });
+  await restoreSnapshotsFromDisk();
   await setupAlarm();
   await pollUsage();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
+  await restoreSnapshotsFromDisk();
   await setupAlarm();
   await pollUsage();
 });
