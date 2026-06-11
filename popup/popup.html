@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claude Token Traker</title>
+<title>Claude Token Tracker</title>
 <style>
 /* Self-hosted fonts (MV3 CSP blocks external stylesheets) */
 @font-face {
@@ -28,7 +28,7 @@
   src: url('../fonts/jetbrains-mono-400.woff2') format('woff2');
 }
 /* ─────────────────────────────────────────────────
-   Claude Token Traker v0.5.1
+   Claude Token Tracker v0.5.2
    ───────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -219,6 +219,10 @@ body.entering .header {
   display: flex; justify-content: space-between;
   font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted);
 }
+.meter-prediction {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px;
+  color: var(--text-faint); margin-top: var(--sp-1);
+}
 
 /* ── Smart actions ── */
 .actions { display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -324,23 +328,6 @@ body.entering .header {
   color: var(--text-muted); text-align: right;
 }
 
-.extra-off {
-  display: flex; align-items: center; gap: var(--sp-3);
-  background: var(--surface-dark-elevated); border-radius: var(--r-md);
-  padding: var(--sp-3) var(--sp-4); border-left: 3px solid var(--text-faint);
-  cursor: pointer; transition: background 0.15s; text-decoration: none;
-}
-.extra-off:hover { background: var(--surface-card); }
-.extra-off-icon {
-  width: 28px; height: 28px; border-radius: 8px;
-  background: var(--surface-card); display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.extra-off-icon svg { width: 14px; height: 14px; color: var(--oauth); }
-.extra-off-body { flex: 1; }
-.extra-off-title { font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 1px; }
-.extra-off-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
-
 /* ── Trend (enhanced sparkline) ── */
 .spark-container { position: relative; }
 .spark-bars { display: flex; align-items: flex-end; gap: 3px; height: 32px; }
@@ -353,6 +340,11 @@ body.entering .header {
 .spark-bar:hover { opacity: 0.8; }
 .spark-bar.today { border-bottom: 2px solid var(--info); }
 .spark-bar.selected { outline: 1px solid var(--coral); outline-offset: 1px; }
+.spark-bar.no-data {
+  background: var(--hairline-soft); opacity: 0.3;
+  border: 1px dashed var(--hairline); border-bottom: none;
+  min-height: 4px;
+}
 .spark-days { display: flex; justify-content: space-between; margin-top: 3px; }
 .spark-days span {
   flex: 1; text-align: center;
@@ -404,7 +396,6 @@ body.entering .header {
   transform-origin: bottom;
 }
 .hourly-bar.active { background: var(--coral); }
-.hourly-bar.estimated { background: var(--text-faint); }
 .hourly-bar.rise { animation: barRise 600ms var(--ease-out) forwards; }
 .hourly-labels { display: flex; justify-content: space-between; margin-top: 2px; }
 .hourly-labels span {
@@ -481,7 +472,7 @@ body.entering .header {
 <header class="header">
   <div class="brand">
     <img class="brand-logo" src="../icons/logo.svg" alt="Logo">
-    <span>Claude Token Traker</span>
+    <span>Claude Token Tracker</span>
   </div>
   <div class="hdr-actions">
     <button class="hdr-btn" id="btnRefresh" title="Refresh">
@@ -509,6 +500,15 @@ body.entering .header {
   <div class="state-body">Log in to claude.ai, then click refresh.</div>
 </div>
 
+<!-- API broken -->
+<div class="auth-state" id="apiBroken" hidden>
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+  </svg>
+  <div class="state-title">API unavailable</div>
+  <div class="state-body">Claude's API may have changed.<br>Try refreshing, or check for extension updates.</div>
+</div>
+
 <!-- Main -->
 <div class="scroll-area" id="mainContent">
 <div class="content">
@@ -525,32 +525,27 @@ body.entering .header {
       <span id="statUsed">--</span>
       <span id="statLeft">--</span>
     </div>
+    <div class="meter-prediction" id="meterPrediction"></div>
   </div>
 
   <!-- 2. Smart actions -->
   <div class="actions anim" id="actionsSection" hidden></div>
 
-  <!-- 3. Model advisor -->
-  <div class="anim" id="advisorSection" hidden>
+  <!-- 3. Models & usage (merged advisor + buckets) -->
+  <div class="anim" id="modelSection" hidden>
     <div class="sec-h">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-      Model advisor
+      Models &amp; usage
     </div>
-    <div class="tile" style="padding:var(--sp-3)" id="advisorContent"></div>
+    <div class="tile" style="padding:var(--sp-3)" id="modelContent"></div>
   </div>
 
-  <!-- 5. Usage buckets -->
-  <div class="anim" id="bucketsSection" hidden>
-    <div class="sec-h">Usage buckets</div>
-    <div class="tile" style="padding:var(--sp-3)"><div id="bucketsList"></div></div>
-  </div>
-
-  <!-- 6. Extra credits -->
+  <!-- 4. Extra credits -->
   <div class="anim" id="extraSection" hidden>
     <div id="extraContent"></div>
   </div>
 
-  <!-- 7. Weekly trend -->
+  <!-- 5. Weekly trend -->
   <div class="anim" id="sparkSection">
     <div class="sec-h">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
@@ -571,14 +566,14 @@ body.entering .header {
     </div>
   </div>
 
-  <!-- 8. Settings -->
+  <!-- 6. Settings -->
   <div class="settings-drawer" id="settingsPanel" hidden>
     <div class="sec-h" style="margin-bottom:var(--sp-2)">Settings</div>
     <div class="settings-row">
       <span class="settings-label">Poll interval</span>
       <select class="settings-select" id="pollSelect">
-        <option value="2">2 min</option>
         <option value="5">5 min</option>
+        <option value="10">10 min</option>
         <option value="15">15 min</option>
       </select>
     </div>
@@ -589,6 +584,13 @@ body.entering .header {
       </label>
     </div>
     <div class="settings-hint">Floating usage % on claude.ai pages</div>
+    <div class="settings-row" style="margin-top:var(--sp-2)">
+      <label class="settings-toggle">
+        <input type="checkbox" id="notifyToggle" checked>
+        Notify at 80% &amp; 95%
+      </label>
+    </div>
+    <div class="settings-hint">Browser notification when usage hits thresholds</div>
     <div class="settings-row" style="margin-top:var(--sp-3)">
       <span class="settings-label">Debug API</span>
       <button class="settings-select" id="btnDebug" style="cursor:pointer">Show raw JSON</button>

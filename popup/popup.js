@@ -1,7 +1,7 @@
 /**
- * Claude Token Traker — Popup v0.5.1
- * Source breakdown · Model advisor · Enhanced weekly trend · SVG icons
- * Apple-style microinteractions
+ * Claude Token Tracker — Popup v0.5.2
+ * Source breakdown · Model breakdown · Enhanced weekly trend · SVG icons
+ * Apple-style microinteractions · Predictive time-to-limit
  */
 
 const BUCKETS = {
@@ -31,6 +31,12 @@ const $ = id => document.getElementById(id);
 const STAGGER = 60; // ms between staggered animations
 
 function normUtil(v) { return v == null ? 0 : v > 1 ? v / 100 : v; }
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
 
 function resetTime(r) {
   if (!r) return null;
@@ -115,11 +121,34 @@ function staggerReveal() {
   });
 }
 
+// ─── Predictive time-to-limit ───
+
+function predictTimeToLimit(snapshots) {
+  const now = Date.now();
+  const recent = snapshots.filter(s =>
+    s.timestamp > now - 2 * 60 * 60 * 1000 && s.five_hour?.utilization != null
+  );
+  if (recent.length < 2) return null;
+  const first = recent[0], last = recent[recent.length - 1];
+  const u1 = normUtil(first.five_hour.utilization);
+  const u2 = normUtil(last.five_hour.utilization);
+  const dt = (last.timestamp - first.timestamp) / 60000;
+  if (dt < 5 || u2 <= u1) return null;
+  const rate = (u2 - u1) / dt;
+  const remaining = 1 - u2;
+  const mins = remaining / rate;
+  if (mins > 300) return null;
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  return h > 0 ? `~${h}h ${m}m` : `~${m}m`;
+}
+
 // ─── State ───
 let selectedDay = null;
 let allSnapshots = [];
 let latestUsage = null;
 let isRefreshing = false;
+let installDate = null;
 
 // ─── Main render ───
 
@@ -136,30 +165,40 @@ async function render(isRefresh) {
       chrome.runtime.sendMessage({ action: 'GET_SETTINGS' })
     ]);
 
-    const { usage, authenticated, lastPoll } = usageRes;
+    const { usage, authenticated, lastPoll, apiStatus } = usageRes;
     allSnapshots = snapRes.snapshots || [];
     latestUsage = usage;
+    installDate = settRes.installDate || null;
 
     $('pollFoot').textContent = lastPoll ? `polled ${relTime(lastPoll)} ago` : '';
-    $('pollSelect').value = String(settRes.pollInterval || 2);
+    $('pollSelect').value = String(settRes.pollInterval || 5);
     $('badgeToggle').checked = settRes.badgeEnabled !== false;
+    $('notifyToggle').checked = settRes.notifyEnabled !== false;
 
     // Auth gate
     if (!authenticated) {
       $('authState').hidden = false;
+      $('apiBroken').hidden = true;
       $('mainContent').hidden = true;
       return;
     }
     $('authState').hidden = true;
+
+    // API broken gate
+    if (apiStatus === 'broken' && !usage) {
+      $('apiBroken').hidden = false;
+      $('mainContent').hidden = true;
+      return;
+    }
+    $('apiBroken').hidden = true;
     $('mainContent').hidden = false;
 
     if (!usage) {
       $('emptyState').hidden = false;
       $('meterTile').hidden = true;
       $('actionsSection').hidden = true;
-      $('bucketsSection').hidden = true;
       $('extraSection').hidden = true;
-      $('advisorSection').hidden = true;
+      $('modelSection').hidden = true;
       renderWeeklyTrend(allSnapshots, usage);
       staggerReveal();
       return;
@@ -205,10 +244,15 @@ async function render(isRefresh) {
       ? `${rem}% left · 7d ${Math.round(normUtil(u7) * 100)}%`
       : `${rem}% remaining`;
 
+    // Prediction
+    const prediction = predictTimeToLimit(allSnapshots);
+    $('meterPrediction').textContent = prediction
+      ? `At this pace, limit in ${prediction}`
+      : '';
+
     renderActions(pct, rt, usage);
-    renderModelAdvisor(usage, pct);
-    renderBuckets(usage);
-    renderExtra(usage.extra_usage, pct);
+    renderModelBreakdown(usage, pct);
+    renderExtra(usage.extra_usage);
     renderWeeklyTrend(allSnapshots, usage);
 
     // Stagger reveal all sections
@@ -275,6 +319,19 @@ function renderActions(pct, resetStr, usage) {
     });
   }
 
+  // Positive low-usage card
+  if (cards.length === 0 && pct < 40) {
+    cards.push({
+      cls: 'good',
+      icon: ICONS.shield, iconBg: 'var(--success-soft)',
+      title: 'Plenty of headroom',
+      desc: `${100 - pct}% remaining — you're well within quota`
+    });
+  }
+
+  // Cap at 2 cards max
+  cards.splice(2);
+
   if (cards.length === 0) {
     container.hidden = true;
     return;
@@ -288,18 +345,18 @@ function renderActions(pct, resetStr, usage) {
     el.innerHTML = `
       <div class="action-icon" style="background:${c.iconBg}">${c.icon}</div>
       <div class="action-body">
-        <div class="action-title">${c.title}</div>
-        <div class="action-desc">${c.desc}</div>
+        <div class="action-title">${escapeHtml(c.title)}</div>
+        <div class="action-desc">${escapeHtml(c.desc)}</div>
       </div>`;
     container.appendChild(el);
   }
 }
 
-// ─── Model Advisor ───
+// ─── Model Breakdown (merged advisor + buckets) ───
 
-function renderModelAdvisor(usage, currentPct) {
-  const section = $('advisorSection');
-  const content = $('advisorContent');
+function renderModelBreakdown(usage, currentPct) {
+  const section = $('modelSection');
+  const content = $('modelContent');
 
   const models = [
     { key: 'seven_day_opus', label: 'Opus', weight: 5 },
@@ -314,7 +371,15 @@ function renderModelAdvisor(usage, currentPct) {
     return { ...m, util, pct: Math.round(util * 100) };
   }).filter(m => m.pct > 0);
 
-  if (data.length === 0) {
+  // Also collect all bucket entries for unified rows
+  const bucketEntries = [];
+  for (const [k, cfg] of Object.entries(BUCKETS)) {
+    const b = usage[k];
+    if (!b || b.utilization == null) continue;
+    bucketEntries.push({ ...cfg, pct: Math.round(normUtil(b.utilization) * 100), color: cfg.color });
+  }
+
+  if (data.length === 0 && bucketEntries.length === 0) {
     section.hidden = true;
     return;
   }
@@ -326,6 +391,7 @@ function renderModelAdvisor(usage, currentPct) {
 
   let html = '';
 
+  // Advisor banner
   if (currentPct >= 70) {
     html += `
       <div class="advisor-banner urgent">
@@ -341,86 +407,53 @@ function renderModelAdvisor(usage, currentPct) {
       </div>`;
   }
 
-  const maxPct = Math.max(...data.map(m => m.pct), 1);
-  for (const m of data) {
-    const barW = Math.max(Math.round((m.pct / maxPct) * 100), 4);
+  // Bucket rows (compact colored-pip style)
+  for (const e of bucketEntries) {
     html += `
-      <div class="advisor-compare">
-        <span class="advisor-model">${m.label}</span>
-        <div class="advisor-bar-track"><div class="advisor-bar-fill animate" style="transform:scaleX(${barW / 100});background:var(--text-faint)"></div></div>
-        <span class="advisor-pct">${m.pct}%</span>
+      <div class="sl-row">
+        <div class="sl-pip" style="background:${e.color}"></div>
+        <span class="sl-name">${escapeHtml(e.label)}</span>
+        <span class="sl-pct">${e.pct}%</span>
+        <div class="sl-track"><div class="sl-fill animate" style="transform:scaleX(${e.pct / 100});background:${e.color}"></div></div>
       </div>`;
   }
 
+  // Advisor link
   html += `
-    <a class="advisor-link" href="https://claude.ai/settings" target="_blank">
-      ${ICONS.externalLink} Change model in Claude settings
+    <a class="advisor-link" href="https://claude.ai" target="_blank">
+      ${ICONS.externalLink} Try a lighter model in your next conversation
     </a>`;
 
   content.innerHTML = html;
 }
 
-// ─── Buckets ───
-
-function renderBuckets(usage) {
-  const list = $('bucketsList');
-  list.innerHTML = '';
-  const entries = [];
-  for (const [k, cfg] of Object.entries(BUCKETS)) {
-    const b = usage[k];
-    if (!b || b.utilization == null) continue;
-    entries.push({ ...cfg, pct: Math.round(normUtil(b.utilization) * 100) });
-  }
-  if (!entries.length) { $('bucketsSection').hidden = true; return; }
-  $('bucketsSection').hidden = false;
-  for (const e of entries) {
-    const r = document.createElement('div');
-    r.className = 'sl-row';
-    r.innerHTML = `
-      <div class="sl-pip" style="background:${e.color}"></div>
-      <span class="sl-name">${e.label}</span>
-      <span class="sl-pct">${e.pct}%</span>
-      <div class="sl-track"><div class="sl-fill animate" style="transform:scaleX(${e.pct / 100});background:${e.color}"></div></div>`;
-    list.appendChild(r);
-  }
-}
-
 // ─── Extra Credits ───
 
-function renderExtra(extra, currentPct) {
+function renderExtra(extra) {
   const container = $('extraContent');
   container.innerHTML = '';
-  $('extraSection').hidden = false;
 
-  if (extra && extra.is_enabled) {
-    const used = extra.used_credits ?? 0;
-    const limit = extra.monthly_limit ?? 0;
-    const spendPct = limit > 0 ? Math.min(Math.round((used / limit) * 100), 100) : 0;
-
-    container.innerHTML = `
-      <div class="extra-active">
-        <div class="extra-active-header">
-          <span class="extra-active-label">Extra usage credits</span>
-          <span class="extra-active-amount">$${used.toFixed(2)}</span>
-        </div>
-        <div class="extra-active-bar">
-          <div class="extra-active-fill animate" style="transform:scaleX(${spendPct / 100})"></div>
-        </div>
-        <div class="extra-active-foot">${limit > 0 ? `$${limit.toFixed(2)} monthly limit` : 'No limit set'}</div>
-      </div>`;
-  } else {
-    const urgency = currentPct >= 70;
-    container.innerHTML = `
-      <a class="extra-off" href="https://claude.ai/settings" target="_blank">
-        <div class="extra-off-icon">${urgency ? ICONS.shield : ICONS.lightbulb}</div>
-        <div class="extra-off-body">
-          <div class="extra-off-title">${urgency ? 'Avoid hitting limits' : 'Extra usage credits'}</div>
-          <div class="extra-off-desc">${urgency
-            ? 'Turn on extra credits to keep working when quota runs out'
-            : 'Enable pay-as-you-go credits for uninterrupted usage'}</div>
-        </div>
-      </a>`;
+  if (!(extra && extra.is_enabled)) {
+    $('extraSection').hidden = true;
+    return;
   }
+
+  $('extraSection').hidden = false;
+  const used = extra.used_credits ?? 0;
+  const limit = extra.monthly_limit ?? 0;
+  const spendPct = limit > 0 ? Math.min(Math.round((used / limit) * 100), 100) : 0;
+
+  container.innerHTML = `
+    <div class="extra-active">
+      <div class="extra-active-header">
+        <span class="extra-active-label">Extra usage credits</span>
+        <span class="extra-active-amount">$${used.toFixed(2)}</span>
+      </div>
+      <div class="extra-active-bar">
+        <div class="extra-active-fill animate" style="transform:scaleX(${spendPct / 100})"></div>
+      </div>
+      <div class="extra-active-foot">${limit > 0 ? `$${limit.toFixed(2)} monthly limit` : 'No limit set'}</div>
+    </div>`;
 }
 
 // ─── Enhanced Weekly Trend ───
@@ -452,56 +485,49 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
   }
 
   const fiveHourUtil = usage?.five_hour ? normUtil(usage.five_hour.utilization) : 0;
-  const sevenDayUtil = usage?.seven_day ? normUtil(usage.seven_day.utilization) : 0;
 
-  const dayData = days.map((day, idx) => {
+  const dayData = days.map((day) => {
     const isToday = day === today;
     const realUtil = realPeaks[day] || 0;
 
     if (realUtil > 0) {
-      return { day, util: realUtil, pct: Math.round(realUtil * 100), estimated: false };
+      return { day, util: realUtil, pct: Math.round(realUtil * 100), noData: false };
     }
 
     // Today: use current 5h reading if no snapshot yet
     if (isToday && fiveHourUtil > 0) {
-      return { day, util: fiveHourUtil, pct: Math.round(fiveHourUtil * 100), estimated: false };
+      return { day, util: fiveHourUtil, pct: Math.round(fiveHourUtil * 100), noData: false };
     }
 
-    // No snapshot for this day — estimate from today's peak + 7d signal
-    // The 7d metric is cumulative quota (low number), not a daily peak,
-    // so we estimate past days as a fraction of today's real peak
-    if (sevenDayUtil > 0 && !isToday) {
-      const todayPeak = realPeaks[today] || fiveHourUtil || 0.5;
-      // Estimate past days at 35–75% of today's peak, with per-day variation
-      const seed = day.charCodeAt(8) * 31 + day.charCodeAt(9);
-      const factor = 0.35 + ((seed % 17) / 17) * 0.4; // 0.35–0.75
-      const estUtil = Math.min(todayPeak * factor, 1);
-      return { day, util: estUtil, pct: Math.round(estUtil * 100), estimated: true };
-    }
-
-    return { day, util: 0, pct: 0, estimated: false };
+    // No data for this day
+    return { day, util: 0, pct: 0, noData: true };
   });
 
-  const maxUtil = Math.max(...dayData.map(d => d.util), 0.01);
+  const maxUtil = Math.max(...dayData.filter(d => !d.noData).map(d => d.util), 0.01);
 
   dayData.forEach((d, i) => {
-    const h = Math.max(Math.round((d.util / maxUtil) * 100), d.util > 0 ? 6 : 2);
     const isToday = d.day === today;
     const isSel = selectedDay === d.day;
 
     const bar = document.createElement('div');
-    bar.className = `spark-bar${isToday ? ' today' : ''}${isSel ? ' selected' : ''}`;
-    bar.style.height = `${h}%`;
-    bar.style.backgroundColor = severityColor(d.pct);
-    bar.style.opacity = d.estimated ? '0.35' : (isToday ? '1' : '0.55');
-    bar.title = d.estimated
-      ? `${d.day}: ~${d.pct}% (estimated)`
-      : `${d.day}: ${d.pct}%`;
+
+    if (d.noData) {
+      bar.className = `spark-bar no-data${isToday ? ' today' : ''}${isSel ? ' selected' : ''}`;
+      bar.title = `${d.day}: no data`;
+    } else {
+      const h = Math.max(Math.round((d.util / maxUtil) * 100), d.util > 0 ? 6 : 2);
+      bar.className = `spark-bar${isToday ? ' today' : ''}${isSel ? ' selected' : ''}`;
+      bar.style.height = `${h}%`;
+      bar.style.backgroundColor = severityColor(d.pct);
+      bar.style.opacity = isToday ? '1' : '0.55';
+      bar.title = `${d.day}: ${d.pct}%`;
+    }
+
     bar.setAttribute('role', 'button');
     bar.setAttribute('tabindex', '0');
-    bar.setAttribute('aria-label', `${dayName(d.day)} ${d.pct}%${d.estimated ? ' estimated' : ''}`);
+    bar.setAttribute('aria-label', `${dayName(d.day)} ${d.noData ? 'no data' : d.pct + '%'}`);
 
-    if (!prefersReducedMotion && !skipAnim) {
+    if (!prefersReducedMotion && !skipAnim && !d.noData) {
       bar.classList.add('rise');
       bar.style.animationDelay = `${i * 70}ms`;
     }
@@ -529,25 +555,23 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
   if (sparkContainer) sparkContainer.setAttribute('aria-label', 'Weekly trend: ' + (summaryParts.length ? summaryParts.join(', ') : 'no data'));
 
   // Stats row
-  const withUsage = dayData.filter(d => d.pct > 0);
-  const realUsage = dayData.filter(d => d.pct > 0 && !d.estimated);
-  const avgPct = withUsage.length > 0
-    ? Math.round(withUsage.reduce((s, d) => s + d.pct, 0) / withUsage.length)
+  const realUsage = dayData.filter(d => d.pct > 0 && !d.noData);
+  const avgPct = realUsage.length > 0
+    ? Math.round(realUsage.reduce((s, d) => s + d.pct, 0) / realUsage.length)
     : 0;
-  const heaviest = withUsage.length > 0
-    ? withUsage.reduce((a, b) => a.pct > b.pct ? a : b)
+  const heaviest = realUsage.length > 0
+    ? realUsage.reduce((a, b) => a.pct > b.pct ? a : b)
     : null;
 
   let statsHtml = '';
 
-  const hasEstimated = dayData.some(d => d.estimated);
-  if (realUsage.length <= 1 && sevenDayUtil > 0) {
-    statsHtml = `<span><span class="label">7d avg: </span><span class="val">${Math.round(sevenDayUtil * 100)}%</span></span>`;
-    if (hasEstimated) {
-      statsHtml += `<span><span class="label" style="font-style:italic;opacity:0.7">Faded = estimated from 7d</span></span>`;
+  if (realUsage.length <= 1) {
+    if (installDate) {
+      const installDateStr = new Date(installDate).toLocaleDateString([], { month: 'short', day: 'numeric' });
+      statsHtml = `<span><span class="label">Tracking since ${escapeHtml(installDateStr)}</span></span>`;
+    } else {
+      statsHtml = `<span><span class="label">Collecting data — bars fill as polls accumulate</span></span>`;
     }
-  } else if (realUsage.length <= 1) {
-    statsHtml = `<span><span class="label">Collecting data — bars fill as polls accumulate</span></span>`;
   } else {
     statsHtml = `<span><span class="label">Avg: </span><span class="val">${avgPct}%</span></span>`;
     if (heaviest) {
@@ -558,8 +582,8 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
 
   // Pattern insight
   if (realUsage.length >= 3) {
-    const weekdays = dayData.filter(d => d.pct > 0 && {1:1,2:1,3:1,4:1,5:1}[new Date(d.day + 'T12:00:00').getDay()]);
-    const weekends = dayData.filter(d => d.pct > 0 && {0:1,6:1}[new Date(d.day + 'T12:00:00').getDay()]);
+    const weekdays = dayData.filter(d => d.pct > 0 && !d.noData && {1:1,2:1,3:1,4:1,5:1}[new Date(d.day + 'T12:00:00').getDay()]);
+    const weekends = dayData.filter(d => d.pct > 0 && !d.noData && {0:1,6:1}[new Date(d.day + 'T12:00:00').getDay()]);
     const avgWd = weekdays.length ? weekdays.reduce((s, d) => s + d.pct, 0) / weekdays.length : 0;
     const avgWe = weekends.length ? weekends.reduce((s, d) => s + d.pct, 0) / weekends.length : 0;
 
@@ -587,37 +611,32 @@ function renderDayDetail(day, snapshots) {
   const detailEl = $('dayDetail');
   const daySnaps = snapshots.filter(s => localDateStr(new Date(s.timestamp)) === day);
 
-  const hourly = new Array(24).fill(0);
-  let isEstimated = false;
+  const dateStr = new Date(day + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 
-  if (daySnaps.length > 0) {
-    for (const s of daySnaps) {
-      const hr = new Date(s.timestamp).getHours();
-      hourly[hr] = Math.max(hourly[hr], normUtil(s.five_hour?.utilization));
-    }
-  } else {
-    isEstimated = true;
-    const curve = [
-      0.05, 0.03, 0.02, 0.02, 0.03, 0.08,
-      0.15, 0.30, 0.55, 0.70, 0.80, 0.85,
-      0.75, 0.90, 1.00, 0.95, 0.85, 0.70,
-      0.55, 0.40, 0.30, 0.20, 0.12, 0.07
-    ];
-    const seed = day.charCodeAt(8) + day.charCodeAt(9);
-    for (let h = 0; h < 24; h++) {
-      const jitter = 0.8 + (((seed + h * 7) % 11) / 11) * 0.4;
-      hourly[h] = Math.min(curve[h] * jitter, 1);
-    }
+  if (daySnaps.length === 0) {
+    detailEl.innerHTML = `
+      <div class="day-detail">
+        <div class="day-detail-header">
+          <span class="day-detail-date">${escapeHtml(dateStr)}</span>
+        </div>
+        <div style="font-size:11px;color:var(--text-muted);padding:var(--sp-2) 0" class="state-body">No data for this day</div>
+      </div>`;
+    return;
+  }
+
+  const hourly = new Array(24).fill(0);
+  for (const s of daySnaps) {
+    const hr = new Date(s.timestamp).getHours();
+    hourly[hr] = Math.max(hourly[hr], normUtil(s.five_hour?.utilization));
   }
 
   const peak = Math.max(...hourly, 0.01);
   const peakPct = Math.round(peak * 100);
-  const dateStr = new Date(day + 'T12:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
 
   let html = `
     <div class="day-detail">
       <div class="day-detail-header">
-        <span class="day-detail-date">${dateStr}${isEstimated ? ' (est.)' : ''}</span>
+        <span class="day-detail-date">${escapeHtml(dateStr)}</span>
         <span class="day-detail-peak">peak ${peakPct}%</span>
       </div>
       <div class="hourly-bars">`;
@@ -625,11 +644,10 @@ function renderDayDetail(day, snapshots) {
   for (let h = 0; h < 24; h++) {
     const val = hourly[h];
     const ht = Math.max(Math.round((val / peak) * 100), val > 0 ? 4 : 1);
-    const barClass = isEstimated ? ' estimated' : (val > 0 ? ' active' : '');
+    const barClass = val > 0 ? ' active' : '';
     const riseClass = !prefersReducedMotion ? ' rise' : '';
-    const opStyle = isEstimated ? `opacity:0.4;` : '';
     const delayStyle = !prefersReducedMotion ? `animation-delay:${h * 20}ms;` : '';
-    html += `<div class="hourly-bar${barClass}${riseClass}" style="height:${ht}%;${opStyle}${delayStyle}" title="${h}:00 — ${isEstimated ? '~' : ''}${Math.round(val * 100)}%"></div>`;
+    html += `<div class="hourly-bar${barClass}${riseClass}" style="height:${ht}%;${delayStyle}" title="${h}:00 — ${Math.round(val * 100)}%"></div>`;
   }
 
   html += `</div>
@@ -664,7 +682,7 @@ function exportCsv() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `token-traker-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `token-tracker-${new Date().toISOString().slice(0, 10)}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -685,6 +703,10 @@ $('pollSelect').addEventListener('change', e => {
 
 $('badgeToggle').addEventListener('change', e => {
   chrome.runtime.sendMessage({ action: 'SET_BADGE_SETTING', enabled: e.target.checked });
+});
+
+$('notifyToggle').addEventListener('change', e => {
+  chrome.runtime.sendMessage({ action: 'SET_NOTIFY_SETTING', enabled: e.target.checked });
 });
 
 $('btnRefresh').addEventListener('click', async () => {
