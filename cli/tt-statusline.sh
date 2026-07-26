@@ -70,8 +70,10 @@ if (pct != null && !stale) {
   if (reset) out += ' \u2502 resets ' + reset;
 } else if (ccTokens > 0) {
   // No extension data — estimate reset from oldest message in window
+  const budget = Number(process.env.TT_TOKEN_BUDGET) || 20e6;
+  const ccPct = Math.min(Math.round(ccTokens / budget * 100), 100);
   const ccReset = oldestTs ? resetIn(oldestTs + 5*60*60*1000) : null;
-  out += fmtT(ccTokens) + ' tokens';
+  out += ccPct + '% ' + bar(ccPct) + ' \u2502 ' + fmtT(ccTokens) + ' tokens';
   if (ccReset) out += ' \u2502 resets ~' + ccReset;
 } else {
   out = 'Claude: no data';
