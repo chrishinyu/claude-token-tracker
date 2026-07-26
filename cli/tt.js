@@ -58,7 +58,7 @@ function readClaudeCodeUsage(windowHours = 5) {
         const output = usage.output_tokens || 0
         const cacheCreate = usage.cache_creation_input_tokens || 0
         const cacheRead = usage.cache_read_input_tokens || 0
-        const total = input + output + cacheCreate
+        const total = input + output + cacheCreate + cacheRead
 
         stats.input_tokens += input
         stats.output_tokens += output
@@ -98,7 +98,7 @@ function readExtensionUsage() {
 function utilPct(bucket) {
   if (!bucket || bucket.utilization == null) return null
   const u = bucket.utilization
-  return u > 1 ? Math.round(u) : Math.round(u * 100)
+  return Math.min(u >= 1.5 ? Math.round(u) : Math.round(u * 100), 100)
 }
 
 function bar(pct, width = 10) {
