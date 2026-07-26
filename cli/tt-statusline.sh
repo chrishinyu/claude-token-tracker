@@ -28,7 +28,7 @@ try {
   const d = JSON.parse(fs.readFileSync('$USAGE_FILE','utf-8'));
   const u = d.five_hour?.utilization;
   if (u != null) {
-    pct = u > 1 ? Math.round(u) : Math.round(u * 100);
+    pct = u >= 1.5 ? Math.round(u) : Math.round(u * 100);
     reset = resetIn(d.five_hour?.resets_at);
     stale = (Date.now() - (d.updated_at||0)) > 600000;
   }
@@ -51,7 +51,7 @@ try {
           if (!ts || ts < cutoff) continue;
           const u = r.message?.usage;
           if (!u) continue;
-          ccTokens += (u.input_tokens||0)+(u.output_tokens||0)+(u.cache_creation_input_tokens||0);
+          ccTokens += (u.input_tokens||0)+(u.output_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);
           ccMsgs++;
           if (!oldestTs || ts < oldestTs) oldestTs = ts;
         } catch {}
@@ -65,10 +65,9 @@ const fmtT = n => n>=1e6?(n/1e6).toFixed(1)+'M':n>=1000?(n/1000).toFixed(1)+'K':
 // ── Compose output ──
 let out = '';
 
-if (pct != null) {
+if (pct != null && !stale) {
   out += pct + '% ' + bar(pct);
   if (reset) out += ' \u2502 resets ' + reset;
-  if (stale) out += ' (stale)';
 } else if (ccTokens > 0) {
   // No extension data — estimate reset from oldest message in window
   const ccReset = oldestTs ? resetIn(oldestTs + 5*60*60*1000) : null;
@@ -79,7 +78,7 @@ if (pct != null) {
 }
 
 // Append Claude Code msg count if active
-if (ccMsgs > 0 && pct != null) {
+if (ccMsgs > 0 && pct != null && !stale) {
   out += ' \u2502 ' + fmtT(ccTokens) + ' (' + ccMsgs + ' msgs)';
 }
 
