@@ -7,6 +7,7 @@
 
 const DEFAULT_POLL_MINUTES = 5;
 const ALARM_POLL = 'usage_poll';
+const ALARM_KEEPALIVE = 'keepalive';
 const MAX_SNAPSHOTS_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ─── Org discovery ───
@@ -55,12 +56,28 @@ async function setAuthState(authenticated) {
 // ─── Normalize usage response ───
 
 function normalizeUsage(raw) {
-  const inner = raw.usage || raw.data || raw;
+  // Unwrap common top-level wrappers
+  const inner = raw.usage || raw.data || raw.rate_limits || raw.limits || raw.quotas || raw;
+
+  // Collect all candidate objects to search (handles arbitrary nesting)
+  const candidates = [raw, inner];
+  for (const key of Object.keys(raw)) {
+    const v = raw[key];
+    if (v && typeof v === 'object' && !Array.isArray(v)) candidates.push(v);
+  }
+  if (inner !== raw) {
+    for (const key of Object.keys(inner)) {
+      const v = inner[key];
+      if (v && typeof v === 'object' && !Array.isArray(v)) candidates.push(v);
+    }
+  }
 
   function fixUtil(bucket) {
     if (!bucket || bucket.utilization == null) return bucket;
     const copy = { ...bucket };
-    if (copy.utilization > 1) copy.utilization = copy.utilization / 100;
+    // >= 1.5 so that 1.0 (100% used) is never mistaken for an integer percentage
+    if (copy.utilization >= 1.5) copy.utilization = copy.utilization / 100;
+    copy.utilization = Math.min(Math.max(copy.utilization, 0), 1);
     return copy;
   }
 
@@ -71,19 +88,47 @@ function normalizeUsage(raw) {
     return null;
   }
 
-  // Always scan both raw and inner for all possible key names
-  function findInBoth(...keys) {
-    return findBucket(raw, ...keys) || findBucket(inner, ...keys);
+  function findInAll(...keys) {
+    for (const obj of candidates) {
+      const result = findBucket(obj, ...keys);
+      if (result) return result;
+    }
+    return null;
   }
 
+  // Log raw response once for debugging format changes. This doubles as the
+  // live test for whether the API returns per-model quota buckets at all —
+  // check this log (chrome://extensions → Token Tracker → service worker
+  // console) for any key naming a model (opus/sonnet/haiku). As of
+  // 2026-09-08 no such key has ever been observed; the per-model guesses
+  // that used to live below (seven_day_opus/sonnet/oauth_apps/cowork) never
+  // matched anything in 305 stored snapshots and were removed rather than
+  // keep shipping a UI built on values that are always null. If this log
+  // ever shows a real per-model key, that's the point to re-add it.
+  const rawKeys = Object.keys(raw);
+  const innerKeys = inner !== raw ? Object.keys(inner) : null;
+  console.log('[TT] Raw API keys:', JSON.stringify(rawKeys),
+    innerKeys ? 'inner keys: ' + JSON.stringify(innerKeys) : '');
+
   return {
-    five_hour:            findInBoth('five_hour', 'fiveHour', '5h', 'five_hours'),
-    seven_day:            findInBoth('seven_day', 'sevenDay', '7d', 'seven_days'),
-    seven_day_opus:       findInBoth('seven_day_opus', 'sevenDayOpus', '7d_opus', 'opus'),
-    seven_day_sonnet:     findInBoth('seven_day_sonnet', 'sevenDaySonnet', '7d_sonnet', 'sonnet'),
-    seven_day_oauth_apps: findInBoth('seven_day_oauth_apps', 'sevenDayOauthApps', '7d_oauth', 'oauth_apps'),
-    seven_day_cowork:     findInBoth('seven_day_cowork', 'sevenDayCowork', '7d_cowork', 'cowork', 'claude_code', 'code'),
-    extra_usage:          raw.extra_usage || raw.extraUsage || inner.extra_usage || inner.extraUsage || null,
+    five_hour:   findInAll('five_hour', 'fiveHour', '5h', 'five_hours', 'five_hour_window', 'fiveHourWindow'),
+    seven_day:   findInAll('seven_day', 'sevenDay', '7d', 'seven_days', 'seven_day_window', 'sevenDayWindow'),
+    extra_usage: findInAll('extra_usage', 'extraUsage'),
+    // Diagnostic only — not a display field. Flushed to disk so the D3
+    // question ("does the API expose per-model quota under any key name?")
+    // can be checked with `grep`/`jq` instead of Chrome devtools. Safe to
+    // ignore downstream; strip before it ever reaches the popup.
+    _debug_raw_keys: innerKeys ? [...new Set([...rawKeys, ...innerKeys])] : rawKeys,
+    // Values, not just key names — a key can exist and still be null/a
+    // feature flag/unrelated. Capture anything that looks model- or
+    // breakdown-shaped so D3 can be settled from one file read.
+    _debug_candidate_values: (() => {
+      const suspects = {};
+      const nameLooksRelevant = k => /opus|sonnet|haiku|model|breakdown|cowork|oauth/i.test(k);
+      for (const k of rawKeys) if (nameLooksRelevant(k)) suspects['raw.' + k] = raw[k];
+      if (innerKeys) for (const k of innerKeys) if (nameLooksRelevant(k)) suspects['inner.' + k] = inner[k];
+      return suspects;
+    })(),
   };
 }
 
@@ -102,7 +147,7 @@ function resetTime(r) {
 async function checkThresholds(usage) {
   const util = usage?.five_hour?.utilization;
   if (util == null) return;
-  const pct = util > 1 ? Math.round(util) : Math.round(util * 100);
+  const pct = Math.min(Math.round(util * 100), 100);
   const { last_notified_pct = 0, notify_enabled } = await chrome.storage.local.get(['last_notified_pct', 'notify_enabled']);
   if (notify_enabled === false) return;
 
@@ -112,7 +157,7 @@ async function checkThresholds(usage) {
       const rt = usage.five_hour?.resets_at;
       const resetStr = rt ? resetTime(rt) : '';
       chrome.notifications.create(`tt-threshold-${t}`, {
-        type: 'basic', iconUrl: 'icons/icon128.png',
+        type: 'basic', iconUrl: 'assets/icons/icon128.png',
         title: `Claude usage at ${pct}%`,
         message: t >= 95 ? 'Near limit — save heavy tasks for after reset' :
           resetStr ? `Resets in ${resetStr}` : 'Consider switching to a lighter model'
@@ -147,6 +192,14 @@ async function tryEndpoint(url) {
     return { skip: true };
   }
   const usage = normalizeUsage(raw);
+
+  // Skip if normalization found nothing (API format may have changed)
+  const hasData = usage.five_hour?.utilization != null || usage.seven_day?.utilization != null;
+  if (!hasData) {
+    console.warn('[TT] Normalized to all-null from', url, '— raw keys:', Object.keys(raw));
+    return { skip: true };
+  }
+
   await storeSnapshot(usage);
   await updateBadge(usage);
   await checkThresholds(usage);
@@ -161,7 +214,9 @@ async function pollUsage() {
   const endpoints = [
     `https://claude.ai/api/organizations/${orgId}/usage`,
     `https://claude.ai/api/organizations/${orgId}/rate_limits`,
-    `https://claude.ai/api/organizations/${orgId}/settings/usage`
+    `https://claude.ai/api/organizations/${orgId}/settings/usage`,
+    `https://claude.ai/api/organizations/${orgId}/quota`,
+    `https://claude.ai/api/organizations/${orgId}/rate_limit_status`
   ];
 
   let authFailure = false;
@@ -177,9 +232,12 @@ async function pollUsage() {
       }
       if (result.auth === false) { authFailure = true; }
       if (result.auth === false || result.rateLimit) return null;
+      // Cached endpoint returned skip (format changed?) — clear it and try all
+      await chrome.storage.local.remove('working_endpoint');
     }
   } catch (err) {
     console.warn('[TT] Cached endpoint failed:', err.message);
+    await chrome.storage.local.remove('working_endpoint');
   }
 
   for (const url of endpoints) {
@@ -257,8 +315,7 @@ function downsampleSnapshots(snapshots) {
 
 function compactSnapshot(usage) {
   const snap = { timestamp: Date.now() };
-  const fields = ['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet',
-                  'seven_day_oauth_apps', 'seven_day_cowork', 'extra_usage'];
+  const fields = ['five_hour', 'seven_day', 'extra_usage'];
   for (const f of fields) {
     if (usage[f] != null) snap[f] = usage[f];
   }
@@ -294,10 +351,10 @@ function flushToDisk(usage) {
   try {
     const fiveHour = usage.five_hour || {};
     const sevenDay = usage.seven_day || {};
-    const opus = usage.seven_day_opus || {};
-    const sonnet = usage.seven_day_sonnet || {};
-    const cowork = usage.seven_day_cowork || {};
 
+    // No `models` block: the API has never returned per-model quota (see
+    // the comment above normalizeUsage's return). Don't ship a field whose
+    // consumers will treat presence-of-key as presence-of-data.
     const payload = {
       version: 1,
       updated_at: Date.now(),
@@ -311,12 +368,11 @@ function flushToDisk(usage) {
         resets_at: sevenDay.resets_at ?? null,
         reset_in: resetTime(sevenDay.resets_at)
       },
-      models: {
-        opus: { utilization: opus.utilization ?? null, resets_at: opus.resets_at ?? null },
-        sonnet: { utilization: sonnet.utilization ?? null, resets_at: sonnet.resets_at ?? null },
-        cowork: { utilization: cowork.utilization ?? null, resets_at: cowork.resets_at ?? null }
-      },
-      extra_usage: usage.extra_usage ?? null
+      extra_usage: usage.extra_usage ?? null,
+      // Diagnostic for the open D3 question — see normalizeUsage(). Not a
+      // display field; the popup and CLI ignore it.
+      _debug_raw_keys: usage._debug_raw_keys ?? null,
+      _debug_candidate_values: usage._debug_candidate_values ?? null
     };
 
     fetch(TT_SERVER, {
@@ -363,7 +419,7 @@ async function updateBadge(usage) {
     await chrome.action.setBadgeBackgroundColor({ color: '#64748B' });
     return;
   }
-  const pct = util > 1 ? Math.round(util) : Math.round(util * 100);
+  const pct = Math.min(Math.round(util * 100), 100);
   const text = pct >= 100 ? '!' : `${pct}%`;
   const color = pct >= 90 ? '#A32D2D' : pct >= 70 ? '#BA7517' : '#3B6D11';
   await chrome.action.setBadgeText({ text });
@@ -383,11 +439,19 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === ALARM_POLL) {
     await pollUsage();
   }
+  // Keepalive just wakes the worker — no action needed
 });
+
+// Keepalive: wake the service worker every 25s so it never goes idle
+chrome.alarms.create(ALARM_KEEPALIVE, { periodInMinutes: 0.4 });
 
 // ─── Message handler ───
 
 const messageHandlers = {
+  async PING() {
+    return { pong: true };
+  },
+
   async GET_USAGE() {
     const data = await chrome.storage.local.get(['latest_usage', 'authenticated', 'last_poll', 'api_status']);
     return {
@@ -441,7 +505,9 @@ const messageHandlers = {
     const endpoints = [
       `https://claude.ai/api/organizations/${orgId}/usage`,
       `https://claude.ai/api/organizations/${orgId}/rate_limits`,
-      `https://claude.ai/api/organizations/${orgId}/settings/usage`
+      `https://claude.ai/api/organizations/${orgId}/settings/usage`,
+      `https://claude.ai/api/organizations/${orgId}/quota`,
+      `https://claude.ai/api/organizations/${orgId}/rate_limit_status`
     ];
 
     const results = {};
@@ -476,7 +542,7 @@ const messageHandlers = {
       const day = new Date(s.timestamp).toISOString().slice(0, 10);
       const u = s.five_hour?.utilization;
       if (u == null) continue;
-      const pct = u > 1 ? u : Math.round(u * 100);
+      const pct = Math.min(Math.round(u * 100), 100);
       peaks[day] = Math.max(peaks[day] || 0, pct);
     }
     return { peaks };

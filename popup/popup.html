@@ -11,21 +11,21 @@
   font-style: normal;
   font-weight: 400 600;
   font-display: swap;
-  src: url('../fonts/inter.woff2') format('woff2');
+  src: url('../assets/fonts/inter.woff2') format('woff2');
 }
 @font-face {
   font-family: 'Cormorant Garamond';
   font-style: normal;
   font-weight: 400 500;
   font-display: swap;
-  src: url('../fonts/cormorant-garamond.woff2') format('woff2');
+  src: url('../assets/fonts/cormorant-garamond.woff2') format('woff2');
 }
 @font-face {
   font-family: 'JetBrains Mono';
   font-style: normal;
   font-weight: 400;
   font-display: swap;
-  src: url('../fonts/jetbrains-mono-400.woff2') format('woff2');
+  src: url('../assets/fonts/jetbrains-mono-400.woff2') format('woff2');
 }
 /* ─────────────────────────────────────────────────
    Claude Token Tracker v0.5.2
@@ -33,55 +33,52 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --surface-dark:          #181715;
-  --surface-dark-elevated: #252320;
-  --surface-dark-soft:     #1f1e1b;
-  --surface-card:          #2a2826;
-  --hairline:              #3d3a36;
-  --hairline-soft:         #322f2b;
+  /* Elevation: body is the floor; tiles sit above it; grooves/tracks are
+     recessed BELOW the tile they're cut into (inset, so darker, not lighter). */
+  --surface-body:     #181715;
+  --surface-tile:     #252320;
+  --surface-hover:    #1f1e1b;
+  --surface-inset:    #141311;   /* bar tracks, wells — darker than the tile */
+  --hairline:         #3d3a36;
+  --hairline-soft:    #322f2b;
 
-  --text-primary:    #faf9f5;
-  --text-secondary:  #a09d96;
-  --text-muted:      #9f9c95;
-  --text-faint:      #918e87;
+  /* Text: three steps, each visibly distinct (was four, two of them identical). */
+  --text-primary:    #faf9f5;   /* 14.9:1 on tile */
+  --text-secondary:  #b4b0a8;   /* ~7.5:1 — labels, secondary lines */
+  --text-faint:      #8f8c85;   /* ~4.6:1 — timestamps, axis labels only, >=10px */
 
-  --coral:           #cc785c;
-  --coral-active:    #a9583e;
+  --coral:           #cc785c;   /* brand accent: interactive, focus, current */
   --coral-glow:      rgba(204,120,92,0.12);
 
   --success:         #5db872;
-  --success-soft:    rgba(93,184,114,0.10);
-  --warning:         #d4a017;
-  --warning-soft:    rgba(212,160,23,0.08);
-  --error:           #c64545;
-  --error-soft:      rgba(198,69,69,0.08);
+  --warning:         #e0a83a;   /* nudged brighter — "getting tight" caution */
+  --danger:          #e5484d;   /* a real alarm red — "near limit", distinct from warning */
+  --danger-soft:     rgba(229,72,77,0.12);
   --info:            #5db8a6;
 
-  --opus:    #b794f6;
-  --sonnet:  #78a9ff;
-  --overall: #5db872;
-  --oauth:   #e8a55a;
-  --cowork:  #f2a0c4;
+  --oauth:   #e8a55a;   /* extra-credits accent (still in use) */
 
   --r-sm: 6px; --r-md: 8px; --r-lg: 12px;
+  /* 4pt base scale — even doubling, so between-group space can always clear
+     within-group space. */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
 
-  /* Apple-style motion */
+  /* Motion. This is a popup opened dozens of times a day — motion is fast,
+     conveys state, and never makes the user wait for choreography. */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --dur-enter: 220ms;
-  --dur-exit:  160ms;
-  --dur-value: 800ms;
-  --stagger:   60ms;
+  --dur-fast:  140ms;   /* press feedback, hover */
+  --dur-base:  200ms;   /* state changes: bar move, color, reveal */
+  --dur-exit:  150ms;
 }
 
 body {
   width: 360px;
-  background: var(--surface-dark);
+  background: var(--surface-body);
   color: var(--text-primary);
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 14px;
   font-weight: 400;
-  line-height: 1.55;
+  line-height: 1.45;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
@@ -89,243 +86,211 @@ body {
 .scroll-area {
   max-height: 520px;
   overflow-y: auto;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
 }
-.scroll-area::-webkit-scrollbar { display: none; }
+.scroll-area::-webkit-scrollbar { width: 6px; }
+.scroll-area::-webkit-scrollbar-thumb {
+  background: var(--hairline); border-radius: 3px;
+}
 
-/* ── Apple-style entrance animations ── */
-@keyframes popupEntrance {
-  from { opacity: 0; transform: translateY(5px) scale(0.985); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(6px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+/* Motion is minimal on purpose: this popup opens dozens of times a day, so
+   there is NO entrance choreography (Raycast principle — a staggered load
+   sequence adds perceived latency to every single open). Content is visible
+   immediately; motion is reserved for state changes inside the popup. */
 @keyframes fadeIn {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-@keyframes barGrow {
-  from { transform: scaleX(0); }
+/* For genuine reveal-on-interaction moments only (a drawer opening, a day
+   detail expanding) — never for page load. */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes barRise {
   from { transform: scaleY(0); }
 }
-@keyframes dimPulse {
-  0%   { opacity: 1; }
-  50%  { opacity: 0.4; }
-  100% { opacity: 1; }
-}
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-  .anim { opacity: 1; transform: none; }
+  /* Kill movement, keep opacity/colour transitions that aid comprehension. */
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-property: opacity, background-color, color, fill, stroke !important;
+  }
 }
 
-/* Popup entrance wrapper */
-body.entering .scroll-area,
-body.entering .header {
-  animation: popupEntrance var(--dur-enter) var(--ease-out) forwards;
-}
+/* Refresh feedback: a hairline shimmer on the top edge of the tile, not a
+   full-content dim (dimming the data you came to read is user-hostile). */
+.refreshing .content { opacity: 0.85; transition: opacity var(--dur-fast) ease; }
 
-/* Section stagger */
-.anim {
-  opacity: 0;
-  transform: translateY(6px);
-}
-.anim.reveal {
-  animation: fadeUp var(--dur-enter) var(--ease-out) forwards;
-}
-
-/* Refresh dimming */
-.refreshing .content { animation: dimPulse 600ms ease; }
-
-/* ── Header ── */
+/* ── Header ──
+   Chrome, not a card: it shares the page fill (--surface-body) and has no
+   divider, so the content tiles (bordered + shadowed) are what floats. The
+   wordmark is quiet identity, not a headline — the icon the user just clicked
+   already established what this is. */
 .header {
   display: flex; align-items: center; justify-content: space-between;
   height: 44px; padding: 0 var(--sp-4);
-  background: var(--surface-dark-elevated);
-  border-bottom: 1px solid var(--hairline-soft);
+  background: var(--surface-body);
 }
 .brand { display: flex; align-items: center; gap: var(--sp-2); }
 .brand-logo {
-  width: 20px; height: 20px; border-radius: 0;
-  object-fit: contain;
+  width: 20px; height: 20px; border-radius: 4px;
+  object-fit: cover; opacity: 0.92;
 }
 .brand span {
   font-family: 'Cormorant Garamond', serif;
-  font-size: 15px; font-weight: 400; letter-spacing: -0.3px;
+  font-size: 15px; font-weight: 500; letter-spacing: -0.3px;
   color: var(--text-primary);
 }
-.hdr-actions { display: flex; }
+.hdr-actions { display: flex; gap: var(--sp-1); }
 .hdr-btn {
+  position: relative;   /* anchor the 44px hit-area pseudo-element */
   display: flex; align-items: center; justify-content: center;
-  width: 34px; height: 34px;
+  width: 32px; height: 32px;
   background: transparent; border: none; border-radius: 9999px;
-  color: var(--text-muted); cursor: pointer;
-  transition: color 0.15s, background 0.15s;
+  color: var(--text-faint); cursor: pointer;
+  transition: color var(--dur-fast) ease, background var(--dur-fast) ease, transform var(--dur-fast) var(--ease-out);
 }
-.hdr-btn:hover { color: var(--text-primary); background: var(--surface-dark-soft); }
+/* Expand the tap/click target to 44×44 without changing the visual size. */
+.hdr-btn::before { content: ""; position: absolute; inset: -6px; }
+/* Refresh is the primary intent — it sits a step brighter at rest. */
+.hdr-btn--primary { color: var(--text-secondary); }
+.hdr-btn:hover { color: var(--text-primary); background: var(--surface-hover); }
+.hdr-btn:active { transform: scale(0.9); }
 .hdr-btn:focus-visible { outline: 2px solid var(--coral); outline-offset: 2px; }
-.hdr-btn.active { color: var(--coral); background: var(--coral-glow); }
-.hdr-btn.spin svg { animation: spinOnce 500ms var(--ease-out); }
-@keyframes spinOnce {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(360deg); }
+/* "Settings drawer open" — a persistent-hover look, not a coral hotspot
+   (coral is reserved for focus). */
+.hdr-btn.active { color: var(--text-primary); background: var(--surface-hover); }
+/* Refresh spinner: loops for as long as the fetch runs (a >340ms fetch used
+   to stall a one-shot rotation mid-turn), linear so it reads as "working". */
+.refreshing #btnRefresh { color: var(--text-faint); pointer-events: none; }
+.refreshing #btnRefresh svg { animation: spin 640ms linear infinite; }
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ── Content ── */
-.content { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-3); }
+/* Between-tile gap (sp-5, 24) clears the largest gap *inside* a tile (sp-4, 16),
+   so tiles read as distinct blocks, not one long stack. */
+.content { padding: var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-5); }
 
 /* ── Tile ── */
+/* One surface treatment for every block (meter / extra / trend / settings):
+   same radius, same padding. Primacy is carried by ONE signal — the meter's
+   border + shadow — not by four slightly different card styles. */
 .tile {
-  background: var(--surface-dark-elevated);
+  background: var(--surface-tile);
   border-radius: var(--r-lg);
   padding: var(--sp-4);
 }
+#meterTile {
+  border: 1px solid var(--hairline-soft);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.28);
+}
 
-/* ── Meter ── */
+/* ── Meter ──
+   Three zones, separated by space, not lines:
+     READ      — "32% used · Plenty left"  + the bar
+     DECISION  — reset countdown  (+ advisory when near the limit)
+     CONTEXT   — window label / weekly / freshness
+   The number is the single focal point: biggest, and the only coloured thing
+   (state colour lives on it AND the bar directly beneath — they agree). The
+   verdict word is a plain-text caption on the same line, not a second hero. */
 .meter-val {
   font-family: 'Cormorant Garamond', serif;
-  font-size: 42px; font-weight: 400; line-height: 1; letter-spacing: -1px;
-  margin-bottom: var(--sp-1);
-  overflow: hidden;
+  font-size: 42px; font-weight: 500; line-height: 1;
+  letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
 }
 .meter-val.ok   { color: var(--success); }
 .meter-val.warn { color: var(--warning); }
-.meter-val.bad  { color: var(--coral); }
-.meter-meta {
-  display: flex; align-items: baseline; justify-content: space-between;
-  margin-bottom: var(--sp-2);
+.meter-val.bad  { color: var(--danger); }
+.meter-val-row {
+  display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
 }
-.meter-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
-.meter-countdown {
-  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted);
+.meter-val-caption {   /* "used · Plenty left" — plain, no state colour */
+  font-size: 13px; font-weight: 500; color: var(--text-secondary);
 }
 .bar-track {
-  width: 100%; height: 5px; background: var(--surface-card);
-  border-radius: 3px; overflow: hidden; margin-bottom: var(--sp-2);
+  width: 100%; height: 8px; background: var(--surface-inset);
+  border-radius: 4px; overflow: hidden; margin-bottom: var(--sp-2);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.3);
 }
 .bar-fill {
-  height: 100%; border-radius: 3px; background: var(--success);
+  height: 100%; border-radius: 4px; background: var(--success);
   transform: scaleX(0); transform-origin: left;
-  transition: transform var(--dur-value) var(--ease-out), background-color 0.3s;
+  transition: transform var(--dur-base) var(--ease-out),
+              background-color var(--dur-base) ease;
 }
-.bar-fill.animate {
-  animation: barGrow var(--dur-value) var(--ease-out) forwards;
+/* DECISION zone */
+.meter-countdown {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-primary);
 }
+.meter-advisory {
+  font-family: 'Inter', sans-serif; font-size: 11px; font-weight: 500;
+  color: var(--danger); margin-top: var(--sp-2);
+}
+/* CONTEXT zone — one generous break above it, then everything tight + faint */
 .meter-foot {
   display: flex; justify-content: space-between;
-  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
+  margin-top: var(--sp-4);
 }
-.meter-prediction {
-  font-family: 'JetBrains Mono', monospace; font-size: 10px;
-  color: var(--text-faint); margin-top: var(--sp-1);
+.meter-updated {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
+  margin-top: var(--sp-1);
 }
-
-/* ── Smart actions ── */
-.actions { display: flex; flex-direction: column; gap: var(--sp-2); }
-.action-card {
-  display: flex; align-items: center; gap: var(--sp-3);
-  padding: var(--sp-3) var(--sp-4);
-  background: var(--surface-dark-elevated);
-  border-radius: var(--r-md);
-  border-left: 3px solid var(--info);
-  cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
-  text-decoration: none;
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
 }
-.action-card:hover { background: var(--surface-card); }
-.action-card:active { transform: scale(0.985); }
-.action-icon {
-  width: 28px; height: 28px; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.action-icon svg { width: 14px; height: 14px; color: var(--text-muted); }
-.action-body { flex: 1; min-width: 0; }
-.action-title { font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 1px; }
-.action-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; }
-.action-card.warn  { border-color: var(--warning); }
-.action-card.good  { border-color: var(--success); }
-.action-card.coral { border-color: var(--coral); }
 
 /* ── Section heading ── */
 .sec-h {
-  font-size: 11px; font-weight: 500; color: var(--text-muted);
-  letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: var(--sp-1);
+  font-size: 11px; font-weight: 600; color: var(--text-secondary);
+  letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: var(--sp-2);
   display: flex; align-items: center; gap: 6px;
 }
 .sec-h svg { width: 12px; height: 12px; }
-/* ── Bucket rows ── */
-.sl-row {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: 5px 0; border-bottom: 1px solid var(--hairline-soft);
-}
-.sl-row:last-child { border-bottom: none; }
-.sl-pip { width: 3px; height: 12px; border-radius: 2px; flex-shrink: 0; }
-.sl-name { flex: 1; font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sl-pct {
-  font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  color: var(--text-primary); font-variant-numeric: tabular-nums;
-  min-width: 30px; text-align: right; flex-shrink: 0;
-}
-.sl-track { width: 40px; height: 3px; background: var(--surface-card); border-radius: 2px; overflow: hidden; flex-shrink: 0; }
-.sl-fill { height: 100%; border-radius: 2px; transform-origin: left; }
-.sl-fill.animate { animation: barGrow var(--dur-value) var(--ease-out) forwards; }
 
-/* ── Model advisor ── */
-.advisor-banner {
-  display: flex; align-items: flex-start; gap: var(--sp-2);
-  padding: var(--sp-3); border-radius: var(--r-md);
-  font-size: 11px; line-height: 1.45; margin-bottom: var(--sp-2);
-}
-.advisor-banner svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; color: var(--text-muted); }
-.advisor-banner.urgent { background: var(--error-soft); color: var(--coral); }
-.advisor-banner.suggest { background: var(--warning-soft); color: var(--warning); }
-.advisor-compare {
-  display: flex; align-items: center; gap: var(--sp-2);
-  padding: 3px 0; font-size: 11px;
-}
-.advisor-model { width: 54px; font-size: 11px; color: var(--text-secondary); flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.advisor-bar-track { flex: 1; height: 3px; background: var(--surface-card); border-radius: 2px; overflow: hidden; }
-.advisor-bar-fill { height: 100%; border-radius: 2px; transform-origin: left; }
-.advisor-bar-fill.animate { animation: barGrow var(--dur-value) var(--ease-out) forwards; }
-.advisor-pct {
-  font-family: 'JetBrains Mono', monospace; font-size: 10px;
-  color: var(--text-muted); min-width: 28px; text-align: right; flex-shrink: 0;
-}
-.advisor-link {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 10px; color: var(--info); text-decoration: none;
-  margin-top: var(--sp-1);
-}
-.advisor-link:hover { text-decoration: underline; }
-.advisor-link svg { width: 10px; height: 10px; color: var(--text-faint); }
+/* (Per-model bucket-row and model-advisor styles removed 2026-09-10 — both
+   features were deleted in round 1.) */
 
 /* ── Extra credits ── */
 .extra-active {
-  background: var(--surface-dark-elevated); border-radius: var(--r-md);
-  padding: var(--sp-3) var(--sp-4); border-left: 3px solid var(--oauth);
+  background: var(--surface-tile); border: 1px solid var(--hairline-soft);
+  border-radius: var(--r-lg); padding: var(--sp-4);
 }
 .extra-active-header {
   display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-2);
 }
-.extra-active-label { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
+.extra-active-label {
+  font-size: 11px; font-weight: 500; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 6px;
+}
+.extra-active-label::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--oauth); flex-shrink: 0;
+}
 .extra-active-amount {
   font-family: 'JetBrains Mono', monospace; font-size: 13px;
   font-weight: 400; color: var(--text-primary);
 }
 .extra-active-bar {
-  width: 100%; height: 3px; background: var(--surface-card);
+  width: 100%; height: 4px; background: var(--surface-inset);
   border-radius: 2px; overflow: hidden; margin-bottom: var(--sp-1);
 }
-.extra-active-fill { height: 100%; border-radius: 2px; background: var(--oauth); transform-origin: left; }
-.extra-active-fill.animate { animation: barGrow var(--dur-value) var(--ease-out) forwards; }
+.extra-active-fill {
+  height: 100%; border-radius: 2px; background: var(--oauth); transform-origin: left;
+  transition: transform var(--dur-base) var(--ease-out);
+}
 .extra-active-foot {
-  font-family: 'JetBrains Mono', monospace; font-size: 10px;
-  color: var(--text-muted); text-align: right;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  color: var(--text-secondary); text-align: right;
 }
 
 /* ── Trend (enhanced sparkline) ── */
@@ -336,7 +301,7 @@ body.entering .header {
   min-height: 2px; cursor: pointer; transition: opacity 0.15s;
   transform-origin: bottom;
 }
-.spark-bar.rise { animation: barRise var(--dur-value) var(--ease-out) forwards; }
+.spark-bar.rise { animation: barRise var(--dur-base) var(--ease-out) forwards; }
 .spark-bar:hover { opacity: 0.8; }
 .spark-bar.today { border-bottom: 2px solid var(--info); }
 .spark-bar.selected { outline: 1px solid var(--coral); outline-offset: 1px; }
@@ -348,32 +313,32 @@ body.entering .header {
 .spark-days { display: flex; justify-content: space-between; margin-top: 3px; }
 .spark-days span {
   flex: 1; text-align: center;
-  font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--text-faint);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
 }
 .spark-days span.today { color: var(--info); font-weight: 500; }
 .spark-days span.selected { color: var(--coral); }
 
 .trend-stats {
   display: flex; gap: var(--sp-3); margin-top: var(--sp-2);
-  font-size: 10px;
+  font-size: 11px;
 }
 .trend-stats .label { color: var(--text-faint); }
 .trend-stats .val { font-family: 'JetBrains Mono', monospace; color: var(--text-secondary); }
 .trend-stats .val.green { color: var(--success); }
 .trend-stats .val.amber { color: var(--warning); }
-.trend-stats .val.coral { color: var(--coral); }
+.trend-stats .val.danger { color: var(--danger); }
 .trend-insight {
-  font-size: 10px; color: var(--text-faint); font-style: italic;
+  font-size: 11px; color: var(--text-faint); font-style: italic;
   margin-top: var(--sp-1);
 }
 .export-btn {
   display: flex; align-items: center; gap: 4px;
   background: none; border: none; cursor: pointer;
-  color: var(--text-muted); font-size: 10px;
+  color: var(--text-secondary); font-size: 11px;
   font-family: 'JetBrains Mono', monospace;
   padding: 2px 0; transition: color 0.15s;
 }
-.export-btn:hover { color: var(--text-secondary); }
+.export-btn:hover { color: var(--text-primary); }
 .export-btn svg { width: 12px; height: 12px; }
 
 /* ── Day detail (hourly curve) ── */
@@ -381,14 +346,14 @@ body.entering .header {
   margin-top: var(--sp-2);
   padding-top: var(--sp-2);
   border-top: 1px solid var(--hairline-soft);
-  animation: fadeUp 200ms var(--ease-out) forwards;
+  animation: fadeUp var(--dur-base) var(--ease-out) forwards;
 }
 .day-detail-header {
   display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--sp-1);
 }
 .day-detail-date { font-size: 11px; font-weight: 500; color: var(--text-secondary); }
 .day-detail-peak {
-  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-secondary);
 }
 .hourly-bars { display: flex; align-items: flex-end; gap: 1px; height: 20px; }
 .hourly-bar {
@@ -396,17 +361,17 @@ body.entering .header {
   transform-origin: bottom;
 }
 .hourly-bar.active { background: var(--coral); }
-.hourly-bar.rise { animation: barRise 600ms var(--ease-out) forwards; }
+.hourly-bar.rise { animation: barRise var(--dur-base) var(--ease-out) forwards; }
 .hourly-labels { display: flex; justify-content: space-between; margin-top: 2px; }
 .hourly-labels span {
-  font-family: 'JetBrains Mono', monospace; font-size: 8px; color: var(--text-faint);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
 }
 
 /* ── Settings ── */
 .settings-drawer {
-  background: var(--surface-dark-elevated); border-radius: var(--r-lg);
-  padding: var(--sp-3) var(--sp-4);
-  animation: fadeUp 200ms var(--ease-out) forwards;
+  background: var(--surface-tile); border-radius: var(--r-lg);
+  padding: var(--sp-4);
+  animation: fadeUp var(--dur-base) var(--ease-out) forwards;
 }
 .settings-row {
   display: flex; align-items: center; justify-content: space-between;
@@ -415,7 +380,7 @@ body.entering .header {
 .settings-label { font-size: 12px; color: var(--text-secondary); }
 .settings-select {
   font-family: 'JetBrains Mono', monospace; font-size: 11px;
-  background: var(--surface-dark); color: var(--text-primary);
+  background: var(--surface-body); color: var(--text-primary);
   border: 1px solid var(--hairline); border-radius: var(--r-sm);
   padding: 3px 6px; outline: none; cursor: pointer;
 }
@@ -428,16 +393,16 @@ body.entering .header {
   accent-color: var(--coral); cursor: pointer;
 }
 .settings-hint {
-  font-size: 10px; color: var(--text-faint); margin-top: 2px; padding-left: 20px;
+  font-size: 11px; color: var(--text-faint); margin-top: 2px; padding-left: 20px;
 }
 .debug-output {
   margin-top: var(--sp-2);
   padding: var(--sp-3);
-  background: var(--surface-dark);
+  background: var(--surface-body);
   border: 1px solid var(--hairline);
   border-radius: var(--r-sm);
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
+  font-size: 10px;
   color: var(--text-secondary);
   max-height: 200px;
   overflow: auto;
@@ -454,38 +419,40 @@ body.entering .header {
 .empty-state svg { margin-bottom: var(--sp-3); color: var(--text-faint); }
 .state-title {
   font-family: 'Cormorant Garamond', serif;
-  font-size: 18px; font-weight: 400; letter-spacing: -0.3px;
+  font-size: 18px; font-weight: 500; letter-spacing: -0.3px;
   color: var(--text-primary); margin-bottom: var(--sp-1);
 }
-.state-body { font-size: 12px; color: var(--text-muted); line-height: 1.55; }
+.state-body { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 
 /* ── Footer ── */
+/* Update time now lives in the meter tile (.meter-updated), next to the data
+   it describes. This page-bottom line is kept only for the "(cached)" fallback
+   note, hidden when empty. */
 .poll-foot {
-  font-family: 'JetBrains Mono', monospace; font-size: 9px;
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
   color: var(--text-faint); text-align: right;
   padding: var(--sp-1) var(--sp-4) var(--sp-2);
 }
+.poll-foot:empty { display: none; }
 </style>
 </head>
-<body class="entering">
+<body>
 
 <header class="header">
   <div class="brand">
-    <img class="brand-logo" src="../icons/logo.svg" alt="Logo">
-    <span>Claude Token Tracker</span>
+    <img class="brand-logo" src="../assets/icons/logo.svg" alt="">
+    <span>Token Tracker</span>
   </div>
   <div class="hdr-actions">
-    <button class="hdr-btn" id="btnRefresh" title="Refresh">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <button class="hdr-btn hdr-btn--primary" id="btnRefresh" aria-label="Refresh usage data" title="Refresh">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
       </svg>
     </button>
-    <button class="hdr-btn" id="btnSettings" title="Settings">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/>
-        <line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/>
-        <line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/>
-        <line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>
+    <button class="hdr-btn" id="btnSettings" aria-label="Settings" aria-expanded="false" title="Settings">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
       </svg>
     </button>
   </div>
@@ -513,32 +480,43 @@ body.entering .header {
 <div class="scroll-area" id="mainContent">
 <div class="content">
 
-  <!-- 1. Meter -->
+  <!-- 1. Meter. The hero is a plain-language VERDICT ("Plenty left" / "Getting tight" /
+       "Near limit"), not a percentage. Rationale (2026-09-10 design review): at a 2-second
+       glance the only decision is "keep going or wrap up" — the verdict answers it, the
+       reset countdown prices the alternative, the bar shows the trend. A headline percentage
+       added nothing and, worse, the previous "% left" headline counted DOWN while the bar
+       counted UP — opposite directions, stacked. Every percentage in the tile now points the
+       same way as the bar (% used). See Planning/backlog.md. -->
+  <!-- Meter — three zones separated by space (2026-09-10 layout review, Celine +
+       impeccable). READ: the number is the sole focal point (biggest + the only
+       coloured thing; state colour on it AND the bar, which agree). "used ·
+       Plenty left" is a plain caption on the same line, not a second hero.
+       DECISION: reset countdown (+ advisory near the limit). CONTEXT: window
+       label / weekly / freshness, pushed down and faint. -->
   <div class="tile anim" id="meterTile">
-    <div class="meter-val ok" id="meterVal" aria-live="polite">--</div>
-    <div class="meter-meta">
-      <span class="meter-label">5-hour window</span>
-      <span class="meter-countdown" id="meterCountdown">--</span>
+    <!-- READ -->
+    <div class="meter-val-row">
+      <span class="meter-val ok" id="meterVal">--</span>
+      <span class="meter-val-caption">used&nbsp;&middot;&nbsp;<span id="meterVerdict">--</span></span>
     </div>
-    <div class="bar-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="Usage meter" id="barTrack"><div class="bar-fill" id="barFill"></div></div>
+    <div class="bar-track" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" aria-label="5-hour window used" id="barTrack"><div class="bar-fill" id="barFill"></div></div>
+    <!-- DECISION -->
+    <div class="meter-countdown" id="meterCountdown">--</div>
+    <div class="meter-advisory" id="meterAdvisory" hidden></div>
+    <!-- CONTEXT -->
     <div class="meter-foot">
       <span id="statUsed">--</span>
       <span id="statLeft">--</span>
     </div>
-    <div class="meter-prediction" id="meterPrediction"></div>
+    <div class="meter-updated" id="meterUpdated"></div>
+    <div class="sr-only" id="meterStatusSr" aria-live="polite"></div>
   </div>
 
-  <!-- 2. Smart actions -->
-  <div class="actions anim" id="actionsSection" hidden></div>
-
-  <!-- 3. Models & usage (merged advisor + buckets) -->
-  <div class="anim" id="modelSection" hidden>
-    <div class="sec-h">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-      Models &amp; usage
-    </div>
-    <div class="tile" style="padding:var(--sp-3)" id="modelContent"></div>
-  </div>
+  <!-- Per-model breakdown removed 2026-09-08: the API never returns
+       per-model quota (seven_day_opus/sonnet/oauth_apps/cowork were guessed
+       key names in background.js that matched nothing in 305 snapshots) —
+       see Planning/backlog.md for the finding. Re-add only if a real
+       per-model source is confirmed. -->
 
   <!-- 4. Extra credits -->
   <div class="anim" id="extraSection" hidden>
@@ -555,7 +533,7 @@ body.entering .header {
         CSV
       </button>
     </div>
-    <div class="tile" style="padding:var(--sp-3)">
+    <div class="tile">
       <div class="spark-container">
         <div class="spark-bars" id="sparkBars"></div>
         <div class="spark-days" id="sparkDays"></div>

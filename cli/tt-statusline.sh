@@ -35,10 +35,15 @@ try {
 } catch {}
 
 // ── Claude Code local token count (5h rolling window) ──
+// Dedup by requestId: Claude Code re-emits the same assistant turn across
+// retries/streaming checkpoints with an identical requestId — without this,
+// usage is double- or triple-counted (~45% of raw records were duplicates
+// in a local sample audit, 2026-09-08).
 let ccTokens = 0, ccMsgs = 0, oldestTs = null;
 try {
   const projectsDir = path.join(os.homedir(), '.claude', 'projects');
   const cutoff = Date.now() - 5*60*60*1000;
+  const seenRequestIds = new Set();
   for (const proj of fs.readdirSync(projectsDir)) {
     const pp = path.join(projectsDir, proj);
     if (!fs.statSync(pp).isDirectory()) continue;
@@ -46,11 +51,13 @@ try {
       for (const line of fs.readFileSync(path.join(pp,f),'utf-8').split('\n')) {
         try {
           const r = JSON.parse(line);
-          if (r.type !== 'assistant') continue;
+          if (r.type !== 'assistant' || r.isSidechain) continue;
           const ts = new Date(r.timestamp).getTime();
           if (!ts || ts < cutoff) continue;
           const u = r.message?.usage;
           if (!u) continue;
+          const rid = r.requestId || r.message?.id;
+          if (rid) { if (seenRequestIds.has(rid)) continue; seenRequestIds.add(rid); }
           ccTokens += (u.input_tokens||0)+(u.output_tokens||0)+(u.cache_creation_input_tokens||0)+(u.cache_read_input_tokens||0);
           ccMsgs++;
           if (!oldestTs || ts < oldestTs) oldestTs = ts;

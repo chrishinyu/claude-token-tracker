@@ -29,6 +29,11 @@ function readClaudeCodeUsage(windowHours = 5) {
     oldest: Date.now(),
     newest: 0
   }
+  // Claude Code re-emits the same assistant turn across retries/streaming
+  // checkpoints with an identical requestId — without dedup this double- or
+  // triple-counts real usage. Seen locally: ~45% of raw assistant records
+  // are duplicates of an already-seen requestId.
+  const seenRequestIds = new Set()
 
   // Walk all project dirs
   const projectDirs = fs.readdirSync(projectsDir)
@@ -48,11 +53,19 @@ function readClaudeCodeUsage(windowHours = 5) {
         try { record = JSON.parse(line) } catch { continue }
 
         if (record.type !== "assistant") continue
+        if (record.isSidechain) continue
         const ts = new Date(record.timestamp).getTime()
         if (!ts || ts < cutoff) continue
 
         const usage = record.message?.usage
         if (!usage) continue
+
+        // Dedup: same requestId = same turn re-emitted, not new usage.
+        const rid = record.requestId || record.message?.id
+        if (rid) {
+          if (seenRequestIds.has(rid)) continue
+          seenRequestIds.add(rid)
+        }
 
         const input = usage.input_tokens || 0
         const output = usage.output_tokens || 0

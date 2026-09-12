@@ -1,36 +1,13 @@
 /**
  * Claude Token Tracker — Popup v0.5.2
- * Source breakdown · Model breakdown · Enhanced weekly trend · SVG icons
- * Apple-style microinteractions · Predictive time-to-limit
+ * Enhanced weekly trend · Apple-style microinteractions · Predictive time-to-limit
  */
-
-const BUCKETS = {
-  seven_day_opus:       { label: 'Opus (7d)',       color: 'var(--opus)' },
-  seven_day_sonnet:     { label: 'Sonnet (7d)',     color: 'var(--sonnet)' },
-  seven_day:            { label: 'Overall (7d)',    color: 'var(--overall)' },
-  seven_day_oauth_apps: { label: 'OAuth apps (7d)', color: 'var(--oauth)' },
-  seven_day_cowork:     { label: 'Cowork (7d)',     color: 'var(--cowork)' }
-};
-
-// ─── SVG Icons (inline strings, Feather-style) ───
-
-const ICONS = {
-  clock:         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
-  arrowDown:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/></svg>',
-  alertTriangle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-  barChart:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
-  shield:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
-  lightbulb:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 00-4 12.7V17h8v-2.3A7 7 0 0012 2z"/></svg>',
-  repeat:        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 014-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 01-4 4H3"/></svg>',
-  externalLink:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>'
-};
 
 // ─── Helpers ───
 
 const $ = id => document.getElementById(id);
-const STAGGER = 60; // ms between staggered animations
 
-function normUtil(v) { return v == null ? 0 : v > 1 ? v / 100 : v; }
+function normUtil(v) { return v == null ? 0 : Math.min(v >= 1.5 ? v / 100 : v, 1); }
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -55,22 +32,29 @@ function dayName(s) {
 }
 
 function relTime(ts) {
-  if (!ts) return '';
+  if (!ts) return "";
   const d = Date.now() - ts;
-  if (d < 6e4) return 'now';
-  if (d < 36e5) return `${Math.floor(d / 6e4)}m`;
-  if (d < 864e5) return `${Math.floor(d / 36e5)}h`;
-  return `${Math.floor(d / 864e5)}d`;
+  if (d < 6e4) return "now";
+  if (d < 36e5) return Math.floor(d / 6e4) + "m ago";
+  if (d < 864e5) return Math.floor(d / 36e5) + "h ago";
+  return Math.floor(d / 864e5) + "d ago";
+}
+
+// "updated" line: "now" has no "ago"; everything else already carries it.
+function updatedLabel(ts) {
+  if (!ts) return "";
+  const r = relTime(ts);
+  return r === "now" ? "updated just now" : "updated " + r;
 }
 
 function severityColor(pct) {
-  if (pct >= 75) return 'var(--coral)';
+  if (pct >= 75) return 'var(--danger)';
   if (pct >= 50) return 'var(--warning)';
   return 'var(--success)';
 }
 
 function severityClass(pct) {
-  if (pct >= 75) return 'coral';
+  if (pct >= 75) return 'danger';
   if (pct >= 50) return 'amber';
   return 'green';
 }
@@ -92,56 +76,15 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 
 // ─── Animation helpers ───
 
-let animFrameId = null;
+// The popup no longer has an entrance sequence — sections are visible on paint
+// (it opens dozens of times a day; a staggered load makes every open feel
+// slower). Kept as a harmless no-op so the call sites don't need touching.
+function staggerReveal() {}
 
-function animateCountUp(el, target, duration) {
-  if (prefersReducedMotion) { el.textContent = target + '%'; return; }
-  const start = performance.now();
-  function tick(now) {
-    const t = Math.min((now - start) / duration, 1);
-    const eased = 1 - Math.pow(1 - t, 3);
-    el.textContent = Math.round(eased * target) + '%';
-    if (t < 1) animFrameId = requestAnimationFrame(tick);
-  }
-  if (animFrameId) cancelAnimationFrame(animFrameId);
-  animFrameId = requestAnimationFrame(tick);
-}
-
-function staggerReveal() {
-  if (prefersReducedMotion) {
-    document.querySelectorAll('.anim').forEach(el => { el.style.opacity = '1'; el.style.transform = 'none'; });
-    return;
-  }
-  const anims = document.querySelectorAll('.anim');
-  anims.forEach((el, i) => {
-    el.classList.remove('reveal');
-    void el.offsetWidth; // force reflow
-    el.style.animationDelay = `${i * STAGGER}ms`;
-    el.classList.add('reveal');
-  });
-}
-
-// ─── Predictive time-to-limit ───
-
-function predictTimeToLimit(snapshots) {
-  const now = Date.now();
-  const recent = snapshots.filter(s =>
-    s.timestamp > now - 2 * 60 * 60 * 1000 && s.five_hour?.utilization != null
-  );
-  if (recent.length < 2) return null;
-  const first = recent[0], last = recent[recent.length - 1];
-  const u1 = normUtil(first.five_hour.utilization);
-  const u2 = normUtil(last.five_hour.utilization);
-  const dt = (last.timestamp - first.timestamp) / 60000;
-  if (dt < 5 || u2 <= u1) return null;
-  const rate = (u2 - u1) / dt;
-  const remaining = 1 - u2;
-  const mins = remaining / rate;
-  if (mins > 300) return null;
-  const h = Math.floor(mins / 60);
-  const m = Math.round(mins % 60);
-  return h > 0 ? `~${h}h ${m}m` : `~${m}m`;
-}
+// Point-estimate "time to limit" prediction removed 2026-09-10: it fit a line
+// through as few as 2 snapshots in a bursty signal — a confident number with
+// no basis. A rate signal, if it returns, has to gate on sample count and
+// show a range, never a single time. See the design-review notes.
 
 // ─── State ───
 let selectedDay = null;
@@ -160,17 +103,20 @@ async function render(isRefresh) {
     }
 
     const [usageRes, snapRes, settRes] = await Promise.all([
-      chrome.runtime.sendMessage({ action: 'GET_USAGE' }),
-      chrome.runtime.sendMessage({ action: 'GET_SNAPSHOTS' }),
-      chrome.runtime.sendMessage({ action: 'GET_SETTINGS' })
+      sendMsg({ action: 'GET_USAGE' }),
+      sendMsg({ action: 'GET_SNAPSHOTS' }),
+      sendMsg({ action: 'GET_SETTINGS' })
     ]);
+
+    if (!usageRes) throw new Error('Service worker not responding');
 
     const { usage, authenticated, lastPoll, apiStatus } = usageRes;
     allSnapshots = snapRes.snapshots || [];
     latestUsage = usage;
     installDate = settRes.installDate || null;
 
-    $('pollFoot').textContent = lastPoll ? `polled ${relTime(lastPoll)} ago` : '';
+    $('pollFoot').textContent = '';
+    $('meterUpdated').textContent = updatedLabel(lastPoll);
     $('pollSelect').value = String(settRes.pollInterval || 5);
     $('badgeToggle').checked = settRes.badgeEnabled !== false;
     $('notifyToggle').checked = settRes.notifyEnabled !== false;
@@ -196,9 +142,7 @@ async function render(isRefresh) {
     if (!usage) {
       $('emptyState').hidden = false;
       $('meterTile').hidden = true;
-      $('actionsSection').hidden = true;
       $('extraSection').hidden = true;
-      $('modelSection').hidden = true;
       renderWeeklyTrend(allSnapshots, usage);
       staggerReveal();
       return;
@@ -207,27 +151,30 @@ async function render(isRefresh) {
     $('emptyState').hidden = true;
     $('meterTile').hidden = false;
 
-    // ── Meter ──
+    // ── Meter ── (see the 3-zone comment in popup.html)
+    // READ: number (state-coloured) + "used · <verdict>" caption + the bar,
+    // which shares the number.s colour so they agree. DECISION: countdown +
+    // near-limit advisory. CONTEXT: window/weekly/freshness, pushed down.
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const rem = Math.max(100 - pct, 0);
     const st = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : 'ok';
+    const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
 
     const mv = $('meterVal');
     mv.className = `meter-val ${st}`;
+    mv.textContent = `${pct}%`;
 
-    // Animated count-up
-    animateCountUp(mv, pct, 800);
+    $("meterVerdict").textContent = verdict;
 
     // Update ARIA on meter bar
     const barTrack = $('barTrack');
     if (barTrack) barTrack.setAttribute('aria-valuenow', pct);
 
-    // Animated bar fill
+    // Animated bar — FILLS with % used, colored by state.
     const bf = $('barFill');
     bf.style.transform = 'scaleX(0)';
-    bf.style.backgroundColor = st === 'bad' ? 'var(--coral)' : st === 'warn' ? 'var(--warning)' : 'var(--success)';
+    bf.style.backgroundColor = st === 'bad' ? 'var(--danger)' : st === 'warn' ? 'var(--warning)' : 'var(--success)';
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         bf.style.transform = `scaleX(${pct / 100})`;
@@ -235,23 +182,29 @@ async function render(isRefresh) {
     });
 
     const rt = resetTime(f5?.resets_at);
-    $('meterCountdown').textContent = rt ? `resets ${rt}` : '';
-    $('statUsed').textContent = `${pct}% used`;
+    $('meterCountdown').textContent = rt ? `resets in ${rt}` : '';
 
-    const s7 = usage.seven_day;
-    const u7 = s7?.utilization;
-    $('statLeft').textContent = u7 != null
-      ? `${rem}% left · 7d ${Math.round(normUtil(u7) * 100)}%`
-      : `${rem}% remaining`;
+    // Foot: 5-hour window label + weekly usage, both in "% used".
+    $('statUsed').textContent = '5-hour window';
+    const u7 = usage.seven_day?.utilization;
+    const pct7 = u7 != null ? Math.min(Math.round(normUtil(u7) * 100), 100) : null;
+    $('statLeft').textContent = pct7 != null ? `7d ${pct7}% used` : '';
 
-    // Prediction
-    const prediction = predictTimeToLimit(allSnapshots);
-    $('meterPrediction').textContent = prediction
-      ? `At this pace, limit in ${prediction}`
-      : '';
+    // Advisory — plain text, no card. The one piece of real advice, and it
+    // only applies near the limit.
+    const advisory = $('meterAdvisory');
+    if (st === 'bad') {
+      advisory.hidden = false;
+      advisory.textContent = 'Save heavy tasks for after reset';
+    } else {
+      advisory.hidden = true;
+      advisory.textContent = '';
+    }
 
-    renderActions(pct, rt, usage);
-    renderModelBreakdown(usage, pct);
+    // Single accessible status update per render.
+    const sr = $('meterStatusSr');
+    if (sr) sr.textContent = `${pct}% of the 5-hour window used, ${verdict}${rt ? `, resets in ${rt}` : ''}`;
+
     renderExtra(usage.extra_usage);
     renderWeeklyTrend(allSnapshots, usage);
 
@@ -260,7 +213,7 @@ async function render(isRefresh) {
 
   } catch (err) {
     console.error('[TT]', err);
-    $('emptyState').hidden = false;
+    throw err;
   } finally {
     if (isRefresh) {
       isRefreshing = false;
@@ -269,163 +222,14 @@ async function render(isRefresh) {
   }
 }
 
-// ─── Smart Actions (SVG icons, no emojis) ───
-
-function renderActions(pct, resetStr, usage) {
-  const container = $('actionsSection');
-  container.innerHTML = '';
-  const cards = [];
-
-  let heaviest = null, heaviestPct = 0;
-  for (const [key, cfg] of Object.entries(BUCKETS)) {
-    const b = usage[key];
-    if (!b || b.utilization == null) continue;
-    const p = Math.round(normUtil(b.utilization) * 100);
-    if (p > heaviestPct) { heaviest = { key, ...cfg, pct: p }; heaviestPct = p; }
-  }
-
-  if (pct >= 90) {
-    cards.push({
-      cls: 'coral',
-      icon: ICONS.clock, iconBg: 'var(--error-soft)',
-      title: resetStr ? `Resets in ${resetStr}` : 'Near limit',
-      desc: 'Save heavy tasks for after reset'
-    });
-    cards.push({
-      cls: 'warn',
-      icon: ICONS.arrowDown, iconBg: 'var(--warning-soft)',
-      title: 'Switch to Haiku',
-      desc: 'Uses ~10x fewer quota tokens per message',
-      link: 'https://claude.ai/settings'
-    });
-  } else if (pct >= 70) {
-    cards.push({
-      cls: 'warn',
-      icon: ICONS.alertTriangle, iconBg: 'var(--warning-soft)',
-      title: 'Usage elevated',
-      desc: 'Shorter prompts or Haiku can stretch your window'
-    });
-  }
-
-  if (heaviest && heaviestPct >= 40 && heaviest.key !== 'seven_day') {
-    const modelName = heaviest.label.replace(' (7d)', '');
-    cards.push({
-      cls: 'warn',
-      icon: ICONS.barChart, iconBg: 'var(--warning-soft)',
-      title: `${modelName} is ${heaviestPct}% of 7d`,
-      desc: modelName.includes('Opus')
-        ? 'Sonnet handles most tasks equally well'
-        : 'Consider mixing models to spread quota'
-    });
-  }
-
-  // Positive low-usage card
-  if (cards.length === 0 && pct < 40) {
-    cards.push({
-      cls: 'good',
-      icon: ICONS.shield, iconBg: 'var(--success-soft)',
-      title: 'Plenty of headroom',
-      desc: `${100 - pct}% remaining — you're well within quota`
-    });
-  }
-
-  // Cap at 2 cards max
-  cards.splice(2);
-
-  if (cards.length === 0) {
-    container.hidden = true;
-    return;
-  }
-
-  container.hidden = false;
-  for (const c of cards) {
-    const el = document.createElement(c.link ? 'a' : 'div');
-    el.className = `action-card ${c.cls}`;
-    if (c.link) { el.href = c.link; el.target = '_blank'; }
-    el.innerHTML = `
-      <div class="action-icon" style="background:${c.iconBg}">${c.icon}</div>
-      <div class="action-body">
-        <div class="action-title">${escapeHtml(c.title)}</div>
-        <div class="action-desc">${escapeHtml(c.desc)}</div>
-      </div>`;
-    container.appendChild(el);
-  }
-}
-
-// ─── Model Breakdown (merged advisor + buckets) ───
-
-function renderModelBreakdown(usage, currentPct) {
-  const section = $('modelSection');
-  const content = $('modelContent');
-
-  const models = [
-    { key: 'seven_day_opus', label: 'Opus', weight: 5 },
-    { key: 'seven_day_sonnet', label: 'Sonnet', weight: 2 },
-    { key: 'seven_day_cowork', label: 'Code', weight: 2 },
-    { key: 'seven_day_oauth_apps', label: 'OAuth', weight: 1 }
-  ];
-
-  const data = models.map(m => {
-    const b = usage[m.key];
-    const util = b ? normUtil(b.utilization) : 0;
-    return { ...m, util, pct: Math.round(util * 100) };
-  }).filter(m => m.pct > 0);
-
-  // Also collect all bucket entries for unified rows
-  const bucketEntries = [];
-  for (const [k, cfg] of Object.entries(BUCKETS)) {
-    const b = usage[k];
-    if (!b || b.utilization == null) continue;
-    bucketEntries.push({ ...cfg, pct: Math.round(normUtil(b.utilization) * 100), color: cfg.color });
-  }
-
-  if (data.length === 0 && bucketEntries.length === 0) {
-    section.hidden = true;
-    return;
-  }
-  section.hidden = false;
-
-  const opusEntry = data.find(m => m.key === 'seven_day_opus');
-  const opusPct = opusEntry ? opusEntry.pct : 0;
-  const totalPct = data.reduce((s, m) => s + m.pct, 0);
-
-  let html = '';
-
-  // Advisor banner
-  if (currentPct >= 70) {
-    html += `
-      <div class="advisor-banner urgent">
-        ${ICONS.alertTriangle}
-        <span>Switch to Haiku for ~5x more messages before reset</span>
-      </div>`;
-  } else if (opusPct > 30 && totalPct > 0) {
-    const savings = Math.round((opusPct * 0.6));
-    html += `
-      <div class="advisor-banner suggest">
-        ${ICONS.repeat}
-        <span>Opus is ${opusPct}% of 7d. Switching to Sonnet could save ~${savings}% of weighted quota.</span>
-      </div>`;
-  }
-
-  // Bucket rows (compact colored-pip style)
-  for (const e of bucketEntries) {
-    html += `
-      <div class="sl-row">
-        <div class="sl-pip" style="background:${e.color}"></div>
-        <span class="sl-name">${escapeHtml(e.label)}</span>
-        <span class="sl-pct">${e.pct}%</span>
-        <div class="sl-track"><div class="sl-fill animate" style="transform:scaleX(${e.pct / 100});background:${e.color}"></div></div>
-      </div>`;
-  }
-
-  // Advisor link
-  html += `
-    <a class="advisor-link" href="https://claude.ai" target="_blank">
-      ${ICONS.externalLink} Try a lighter model in your next conversation
-    </a>`;
-
-  content.innerHTML = html;
-}
+// Smart-actions card block removed 2026-09-09: after round 1 deleted its
+// content (the "switch model" claims had no source), the surviving cards
+// were inert <div>s that still carried pointer-cursor/hover/press styling —
+// a false affordance, flagged in a /conductor design review. The one real
+// piece of advice (save heavy work near the limit) is now a plain-text line
+// in the meter tile (`.meter-advisory`, no card, no fake interactivity), and
+// the verdict word ("Plenty left"/"Getting tight"/"Near limit") carries the
+// rest of what these cards were trying to say. See Planning/backlog.md.
 
 // ─── Extra Credits ───
 
@@ -619,7 +423,7 @@ function renderDayDetail(day, snapshots) {
         <div class="day-detail-header">
           <span class="day-detail-date">${escapeHtml(dateStr)}</span>
         </div>
-        <div style="font-size:11px;color:var(--text-muted);padding:var(--sp-2) 0" class="state-body">No data for this day</div>
+        <div style="font-size:11px;color:var(--text-secondary);padding:var(--sp-2) 0" class="state-body">No data for this day</div>
       </div>`;
     return;
   }
@@ -694,28 +498,36 @@ function exportCsv() {
 $('btnSettings').addEventListener('click', () => {
   const p = $('settingsPanel');
   p.hidden = !p.hidden;
-  $('btnSettings').classList.toggle('active', !p.hidden);
+  const open = !p.hidden;
+  $('btnSettings').classList.toggle('active', open);
+  $('btnSettings').setAttribute('aria-expanded', String(open));
 });
 
 $('pollSelect').addEventListener('change', e => {
-  chrome.runtime.sendMessage({ action: 'SET_POLL_INTERVAL', minutes: parseInt(e.target.value, 10) });
+  sendMsg({ action: 'SET_POLL_INTERVAL', minutes: parseInt(e.target.value, 10) });
 });
 
 $('badgeToggle').addEventListener('change', e => {
-  chrome.runtime.sendMessage({ action: 'SET_BADGE_SETTING', enabled: e.target.checked });
+  sendMsg({ action: 'SET_BADGE_SETTING', enabled: e.target.checked });
 });
 
 $('notifyToggle').addEventListener('change', e => {
-  chrome.runtime.sendMessage({ action: 'SET_NOTIFY_SETTING', enabled: e.target.checked });
+  sendMsg({ action: 'SET_NOTIFY_SETTING', enabled: e.target.checked });
 });
 
 $('btnRefresh').addEventListener('click', async () => {
+  // The spinner is driven by the body `.refreshing` class (added/removed by
+  // render(true)), so it loops for the real duration of the fetch instead of a
+  // fixed 500ms. `disabled` guards against double-fire.
   const b = $('btnRefresh');
-  b.classList.add('spin');
+  if (b.disabled) return;
   b.disabled = true;
-  await chrome.runtime.sendMessage({ action: 'REFRESH' });
-  await render(true);
-  setTimeout(() => { b.classList.remove('spin'); b.disabled = false; }, 500);
+  try {
+    await sendMsg({ action: 'REFRESH' });
+    await render(true);
+  } finally {
+    b.disabled = false;
+  }
 });
 
 $('btnExport').addEventListener('click', (e) => {
@@ -728,9 +540,9 @@ $('btnDebug').addEventListener('click', async () => {
   out.hidden = false;
   out.textContent = 'Fetching...';
   try {
-    const res = await chrome.runtime.sendMessage({ action: 'DEBUG_API' });
-    const usageRes = await chrome.runtime.sendMessage({ action: 'GET_USAGE' });
-    const snapRes = await chrome.runtime.sendMessage({ action: 'GET_SNAPSHOTS' });
+    const res = await sendMsg({ action: 'DEBUG_API' });
+    const usageRes = await sendMsg({ action: 'GET_USAGE' });
+    const snapRes = await sendMsg({ action: 'GET_SNAPSHOTS' });
     const snaps = snapRes.snapshots || [];
     // Show snapshot date distribution
     const snapDates = {};
@@ -751,7 +563,140 @@ $('btnDebug').addEventListener('click', async () => {
   }
 });
 
+// ─── Service worker message with wake + retry ───
+
+async function wakeWorker() {
+  try {
+    await Promise.race([
+      chrome.runtime.sendMessage({ action: 'PING' }),
+      new Promise(r => setTimeout(r, 500))
+    ]);
+  } catch { /* worker starting up */ }
+}
+
+async function sendMsg(msg, retries = 3) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await Promise.race([
+        chrome.runtime.sendMessage(msg),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))
+      ]);
+      if (res !== undefined) return res;
+    } catch (e) {
+      if (i === retries) throw e;
+    }
+    await wakeWorker();
+  }
+  return null;
+}
+
+// ─── Fallback: read directly from chrome.storage.local if worker is dead ───
+
+async function renderFromStorage() {
+  try {
+    const data = await chrome.storage.local.get([
+      'latest_usage', 'authenticated', 'last_poll', 'api_status',
+      'snapshots', 'poll_interval_minutes', 'badge_enabled',
+      'notify_enabled', 'install_date'
+    ]);
+
+    if (!data.latest_usage && data.authenticated === undefined) return false;
+
+    const usageRes = {
+      usage: data.latest_usage || null,
+      authenticated: data.authenticated !== false,
+      lastPoll: data.last_poll || null,
+      apiStatus: data.api_status || 'ok'
+    };
+    const snapRes = { snapshots: data.snapshots || [] };
+    const settRes = {
+      pollInterval: data.poll_interval_minutes || 5,
+      badgeEnabled: data.badge_enabled !== false,
+      notifyEnabled: data.notify_enabled !== false,
+      installDate: data.install_date || null
+    };
+
+    const { usage, authenticated, lastPoll, apiStatus } = usageRes;
+    allSnapshots = snapRes.snapshots || [];
+    latestUsage = usage;
+    installDate = settRes.installDate || null;
+
+    $('meterUpdated').textContent = updatedLabel(lastPoll);
+    $('pollFoot').textContent = lastPoll ? 'showing cached data' : '';
+    $('pollSelect').value = String(settRes.pollInterval || 5);
+    $('badgeToggle').checked = settRes.badgeEnabled !== false;
+    $('notifyToggle').checked = settRes.notifyEnabled !== false;
+
+    if (!authenticated) {
+      $('authState').hidden = false;
+      $('mainContent').hidden = true;
+      return true;
+    }
+    $('authState').hidden = true;
+    $('mainContent').hidden = false;
+
+    if (!usage) {
+      $('emptyState').hidden = false;
+      $('meterTile').hidden = true;
+      return true;
+    }
+
+    $('emptyState').hidden = true;
+    $('meterTile').hidden = false;
+
+    const f5 = usage.five_hour;
+    const frac = normUtil(f5?.utilization);
+    const pct = Math.min(Math.round(frac * 100), 100);
+    const st = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : 'ok';
+
+    const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
+    { const mvd = $("meterVerdict"); if (mvd) mvd.textContent = verdict; }
+    const advisory = $('meterAdvisory');
+    if (advisory) {
+      advisory.hidden = st !== 'bad';
+      advisory.textContent = st === 'bad' ? 'Save heavy tasks for after reset' : '';
+    }
+
+    const mv = $('meterVal');
+    if (mv) { mv.className = `meter-val ${st}`; mv.textContent = `${pct}%`; }
+    const bf = $('barFill');
+    bf.style.transform = `scaleX(${pct / 100})`;
+    bf.style.backgroundColor = st === 'bad' ? 'var(--danger)' : st === 'warn' ? 'var(--warning)' : 'var(--success)';
+
+    $('meterCountdown').textContent = '';
+    $('statUsed').textContent = '5-hour window';
+    const u7 = usage.seven_day?.utilization;
+    const pct7 = u7 != null ? Math.min(Math.round(normUtil(u7) * 100), 100) : null;
+    $('statLeft').textContent = pct7 != null ? `7d ${pct7}% used` : '';
+
+    renderWeeklyTrend(allSnapshots, usage);
+    staggerReveal();
+    return true;
+  } catch (e) {
+    console.error('[TT] Storage fallback failed:', e);
+    return false;
+  }
+}
+
 // ─── Init ───
-// Remove entrance class after animation completes
-setTimeout(() => document.body.classList.remove('entering'), 300);
-render();
+document.body.classList.remove('entering');
+
+(async () => {
+  // Instant first paint from the last cached snapshot (chrome.storage.local is
+  // synchronous-fast), so the popup opens showing data, not a blank frame —
+  // then reconcile with a live poll. Apple's first principle: kill latency.
+  try { await renderFromStorage(); } catch { /* no cache yet — render() will fill in */ }
+
+  await wakeWorker();
+  try {
+    await render();
+  } catch (e) {
+    console.warn('[TT] Render failed, using storage fallback:', e.message);
+    const ok = await renderFromStorage();
+    if (!ok) {
+      $('mainContent').hidden = false;
+      $('emptyState').hidden = false;
+    }
+    setTimeout(() => render(), 2000);
+  }
+})();

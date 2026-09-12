@@ -6,7 +6,7 @@ You're deep in a Claude Code session, everything's clicking — and then it just
 
 `tt` is a small toolkit that surfaces your Claude usage in real time, everywhere you work. A Chrome extension polls claude.ai every five minutes and pushes your quota data to a local file on your machine. From there, a CLI command gives you an instant snapshot in your terminal, and a status line script plants that same data right at the bottom of every Claude Code session. You always know where you stand — 44% used, 3h 56m until reset — without ever leaving your flow to check a dashboard.
 
-![Claude token tracker browser popup showing 52% of quota used, with a progress bar, a reset timer counting down 3 hours and 30 minutes, and a weekly trend chart displaying daily usage across the past seven days](screenshots/extension-popup.png)
+![Claude token tracker browser popup showing 52% of quota used, with a progress bar, a reset timer counting down 3 hours and 30 minutes, and a weekly trend chart displaying daily usage across the past seven days](docs/screenshots/extension-popup.png)
 
 ---
 
@@ -92,7 +92,7 @@ You'll need:
 This is the piece that writes browser data to disk so the CLI can read it.
 
 ```bash
-node tt-bridge/tt-server.js
+node bridge/tt-server.js
 ```
 
 To start it automatically whenever you open a new terminal, add this to your `~/.zshrc`:
@@ -100,7 +100,7 @@ To start it automatically whenever you open a new terminal, add this to your `~/
 ```bash
 # Claude token tracker bridge
 if ! curl -sf http://127.0.0.1:9898/health > /dev/null 2>&1; then
-  node ~/Work/Building/token-tracker-extension/tt-bridge/tt-server.js &> /tmp/tt-server.log &
+  node ~/Work/Building/token-tracker-extension/bridge/tt-server.js &> /tmp/tt-server.log &
 fi
 ```
 
@@ -114,7 +114,7 @@ sudo ln -sf "$(pwd)/cli/tt.js" /usr/local/bin/tt
 Or use the install script (pass your extension ID from step 1):
 
 ```bash
-bash tt-bridge/install.sh emaneooggjdnmbmnlhkmganeajpkfmbc
+bash bridge/install.sh emaneooggjdnmbmnlhkmganeajpkfmbc
 ```
 
 ### 4. Add the status line to Claude Code
@@ -222,7 +222,7 @@ token-tracker-extension/
 ├── cli/
 │   ├── tt.js              # CLI tool (symlinked to /usr/local/bin/tt)
 │   └── tt-statusline.sh   # Claude Code status line script
-└── tt-bridge/
+└── bridge/
     ├── tt-server.js       # HTTP daemon on :9898, writes ~/.token-tracker/usage.json
     ├── install.sh         # Setup script
     ├── host.js            # Native messaging host (alternative to HTTP bridge)
