@@ -7,6 +7,8 @@
 
 const $ = id => document.getElementById(id);
 
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 function normUtil(v) { return v == null ? 0 : Math.min(v >= 1.5 ? v / 100 : v, 1); }
 
 function escapeHtml(str) {
@@ -158,7 +160,7 @@ async function render(isRefresh) {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : 'ok';
+    const st = pct >= 70 ? 'bad' : pct >= 50 ? 'warn' : 'ok';
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
 
     const mv = $('meterVal');
@@ -515,17 +517,58 @@ $('notifyToggle').addEventListener('change', e => {
   sendMsg({ action: 'SET_NOTIFY_SETTING', enabled: e.target.checked });
 });
 
+// Two tiers of refresh feedback, two classes:
+//   .refreshing    — header spin + meter shimmer + content dim. Goes on
+//                    immediately on click, every time, fast or slow. This
+//                    is the cheap always-on acknowledgment ("your click
+//                    registered").
+//   .loading-mode  — the full-screen blink-eye overlay. NOT immediate: a
+//                    delayed-reveal pattern (same logic as GitHub/Stripe's
+//                    ~300ms spinner threshold), so a normal fast refresh
+//                    (the common case, checked dozens of times a day)
+//                    never pays a ceremony tax. Only a refresh that's
+//                    genuinely still running past OVERLAY_DELAY_MS earns
+//                    the takeover — and once it does, it plays one full,
+//                    uncut 2s cycle (open→close→open, holds on the open
+//                    frame via fill:forwards) before the reveal, so a
+//                    blink that started never gets cut off mid-close by
+//                    data arriving a beat later.
+const OVERLAY_DELAY_MS = 180;   // don't show the overlay for anything faster than this
+const BLINK_DURATION_MS = 2200; // eyeOpen/eyeClosed's own 2s + a small settle buffer
+
 $('btnRefresh').addEventListener('click', async () => {
-  // The spinner is driven by the body `.refreshing` class (added/removed by
-  // render(true)), so it loops for the real duration of the fetch instead of a
-  // fixed 500ms. `disabled` guards against double-fire.
+  // `.refreshing` goes on BEFORE the REFRESH message — that network
+  // round-trip is the actual slow part; render()'s own add() used to fire
+  // after it had already finished, so the class was only ever true for the
+  // few ms of the local-storage reads inside render(), and nothing ever
+  // visibly showed. render(false) here means this handler is the sole
+  // owner of both classes now. `disabled` guards against double-fire —
+  // each click is a fresh, deliberate request, so there's no separate
+  // replay-cooldown beyond that.
   const b = $('btnRefresh');
   if (b.disabled) return;
   b.disabled = true;
+  document.body.classList.add('refreshing');
+
+  let overlayShownAt = 0;
+  const overlayTimer = setTimeout(() => {
+    overlayShownAt = Date.now();
+    document.body.classList.add('loading-mode');
+  }, OVERLAY_DELAY_MS);
+
   try {
     await sendMsg({ action: 'REFRESH' });
-    await render(true);
+    await render(false);
+    clearTimeout(overlayTimer);
+    if (overlayShownAt) {
+      // The overlay actually appeared — let its blink finish the cycle it's
+      // already mid-way through rather than yanking it away early.
+      const remaining = BLINK_DURATION_MS - (Date.now() - overlayShownAt);
+      if (remaining > 0) await wait(remaining);
+    }
   } finally {
+    clearTimeout(overlayTimer);
+    document.body.classList.remove('refreshing', 'loading-mode');
     b.disabled = false;
   }
 });
@@ -647,7 +690,7 @@ async function renderFromStorage() {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : 'ok';
+    const st = pct >= 70 ? 'bad' : pct >= 50 ? 'warn' : 'ok';
 
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
     { const mvd = $("meterVerdict"); if (mvd) mvd.textContent = verdict; }
