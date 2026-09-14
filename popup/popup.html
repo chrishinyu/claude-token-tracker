@@ -119,6 +119,15 @@ body {
     animation-iteration-count: 1 !important;
     transition-property: opacity, background-color, color, fill, stroke !important;
   }
+  /* The iris-reveal mask isn't in that allowed list (it's spatial, not
+     opacity/colour), so without an explicit fallback it would hard-snap
+     instead of transitioning at all. apple-design §14: replace the
+     spring/wipe with a short opacity cross-fade, not nothing. */
+  .refresh-overlay {
+    mask-image: none; -webkit-mask-image: none;
+    opacity: 0; transition: opacity 150ms ease !important;
+  }
+  .loading-mode .refresh-overlay { opacity: 1; }
 }
 
 /* Refresh feedback: a hairline shimmer on the top edge of the tile, not a
@@ -302,20 +311,38 @@ body {
    for the whole operation) so there's no separate replay-cooldown — a
    second refresh right after the first is always a fresh, intentional ask,
    not ambient repetition. */
+/* Iris reveal: the overlay doesn't fade out flat, it recedes as a hole
+   opening at its own center (where the eye already sits, so the wipe is
+   anchored to the thing the user was just looking at — apple-design §7,
+   motion originates from the focal point) and growing outward until the
+   whole popup is uncovered. Driven by --reveal, the transparent disk's
+   radius in a radial-gradient mask: 0px = disk is a pinpoint = overlay
+   fully opaque/visible; past the popup's own diagonal = disk swallows
+   everything = overlay fully invisible. @property registers it so the
+   browser tweens the radius continuously instead of snapping (custom
+   properties don't interpolate by default). */
+@property --reveal {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 600px;
+}
 .refresh-overlay {
   position: fixed; inset: 0; z-index: 5;
   display: flex; align-items: center; justify-content: center;
   background: color-mix(in srgb, var(--surface-body) 92%, transparent);
   backdrop-filter: blur(0px);
-  opacity: 0; pointer-events: none;
-  /* exit: ease-in, recedes with intent (apple-design §12: animate blur +
-     opacity together so the scrim reads as a material leaving, not a
-     value ticking to zero) */
-  transition: opacity 200ms cubic-bezier(0.4, 0, 1, 1), backdrop-filter 200ms cubic-bezier(0.4, 0, 1, 1);
+  pointer-events: none;
+  --reveal: 600px; /* hidden at rest: disk covers the full popup */
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent var(--reveal), #000 calc(var(--reveal) + 1px));
+          mask-image: radial-gradient(circle at 50% 50%, transparent var(--reveal), #000 calc(var(--reveal) + 1px));
+  /* exit: the hole grows back open, slower and eased so the reveal reads
+     as deliberate, not a snap; blur recedes with it (apple-design §12) */
+  transition: --reveal 380ms cubic-bezier(0.4, 0, 0.2, 1), backdrop-filter 260ms cubic-bezier(0.4, 0, 1, 1);
 }
 .loading-mode .refresh-overlay {
-  opacity: 1; pointer-events: auto; backdrop-filter: blur(6px);
-  transition: opacity 200ms cubic-bezier(0.23, 1, 0.32, 1), backdrop-filter 200ms cubic-bezier(0.23, 1, 0.32, 1); /* enter: strong ease-out */
+  pointer-events: auto; backdrop-filter: blur(6px);
+  --reveal: 0px; /* shown: the hole closes to a pinpoint, overlay fully covers */
+  transition: --reveal 200ms cubic-bezier(0.23, 1, 0.32, 1), backdrop-filter 200ms cubic-bezier(0.23, 1, 0.32, 1); /* enter: strong ease-out */
 }
 .refresh-overlay-eye {
   position: relative; width: 72px; height: 67px; flex: none;

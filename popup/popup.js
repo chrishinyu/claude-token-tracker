@@ -83,6 +83,23 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 // slower). Kept as a harmless no-op so the call sites don't need touching.
 function staggerReveal() {}
 
+// Counts an element's text 0→to, eased to match --ease-out (cubic-bezier
+// (0.16,1,0.3,1) — no native JS equivalent, easeOutCubic is a close stand-in)
+// over the same window as the bar-fill's own CSS transition, so the number
+// and the bar read as one animated fact rather than a static number next to
+// a moving bar. Skips straight to the final value under reduced motion.
+function animateCount(el, to, ms = 200) {
+  if (prefersReducedMotion) { el.textContent = `${to}%`; return; }
+  const start = performance.now();
+  function tick(now) {
+    const t = Math.min((now - start) / ms, 1);
+    const eased = 1 - Math.pow(1 - t, 3);
+    el.textContent = `${Math.round(to * eased)}%`;
+    if (t < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
 // Point-estimate "time to limit" prediction removed 2026-09-10: it fit a line
 // through as few as 2 snapshots in a bursty signal — a confident number with
 // no basis. A rate signal, if it returns, has to gate on sample count and
@@ -165,7 +182,11 @@ async function render(isRefresh) {
 
     const mv = $('meterVal');
     mv.className = `meter-val ${st}`;
-    mv.textContent = `${pct}%`;
+    // Counts up 0→pct in step with the bar's own fill transition (same
+    // 200ms/ease-out) rather than snapping to text — the two are reading
+    // the same fact and should move as one, not one animating while the
+    // other just appears.
+    animateCount(mv, pct);
 
     $("meterVerdict").textContent = verdict;
 
@@ -558,13 +579,24 @@ $('btnRefresh').addEventListener('click', async () => {
 
   try {
     await sendMsg({ action: 'REFRESH' });
-    await render(false);
     clearTimeout(overlayTimer);
     if (overlayShownAt) {
-      // The overlay actually appeared — let its blink finish the cycle it's
-      // already mid-way through rather than yanking it away early.
+      // The overlay actually appeared — let its blink finish the cycle
+      // it's already mid-way through rather than yanking it away early.
       const remaining = BLINK_DURATION_MS - (Date.now() - overlayShownAt);
       if (remaining > 0) await wait(remaining);
+      // Remove the class AND populate the data in the same breath: the
+      // iris-reveal mask starts opening right as render() kicks off the
+      // bar-fill transition and number count-up, so the user watches the
+      // numbers actually grow into place as the popup uncovers — not a
+      // reveal of numbers that finished animating, unseen, under an
+      // opaque overlay a moment earlier.
+      document.body.classList.remove('loading-mode');
+      await render(false);
+    } else {
+      // Fast path: the overlay never appeared, nothing to sync the reveal
+      // against — just populate immediately.
+      await render(false);
     }
   } finally {
     clearTimeout(overlayTimer);
