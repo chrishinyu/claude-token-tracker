@@ -124,7 +124,10 @@ body {
      instead of transitioning at all. apple-design §14: replace the
      spring/wipe with a short opacity cross-fade, not nothing. */
   .refresh-overlay {
-    mask-image: none; -webkit-mask-image: none;
+    /* !important because the base .refresh-overlay rule further down the
+       sheet has equal specificity and would otherwise win on source order,
+       leaving the mask live and hard-snapping — verified in Chrome. */
+    mask-image: none !important; -webkit-mask-image: none !important;
     opacity: 0; transition: opacity 150ms ease !important;
   }
   .loading-mode .refresh-overlay { opacity: 1; }

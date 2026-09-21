@@ -83,21 +83,32 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 // slower). Kept as a harmless no-op so the call sites don't need touching.
 function staggerReveal() {}
 
-// Counts an element's text 0→to, eased to match --ease-out (cubic-bezier
-// (0.16,1,0.3,1) — no native JS equivalent, easeOutCubic is a close stand-in)
-// over the same window as the bar-fill's own CSS transition, so the number
-// and the bar read as one animated fact rather than a static number next to
-// a moving bar. Skips straight to the final value under reduced motion.
+// Counts an element's text from its CURRENT value to `to`, eased to match
+// --ease-out (cubic-bezier(0.16,1,0.3,1) — no native JS equivalent,
+// easeOutCubic is a close stand-in) over the same window as the bar-fill's
+// own CSS transition, so the number and the bar read as one animated fact
+// rather than a static number next to a moving bar.
+//
+// Counting from the current value, not from 0, is the whole point: the bar
+// is a CSS transition, which always interpolates from wherever it already
+// is. A count that restarted at 0 on every refresh diverged visibly from a
+// bar that barely moved (verified in Chrome: mid-refresh the number read
+// 53% next to a bar sitting at 73%). Same rule as the bar now — on first
+// open the current value is 0 so the intro still counts all the way up; on
+// a refresh that didn't move the needle, neither of them moves, which is
+// the honest signal.
 function animateCount(el, to, ms = 200) {
-  if (prefersReducedMotion) { el.textContent = `${to}%`; return; }
+  const from = parseInt(el.textContent, 10) || 0;
+  if (prefersReducedMotion || from === to) { el.textContent = `${to}%`; return; }
+  cancelAnimationFrame(el._countRaf);
   const start = performance.now();
   function tick(now) {
     const t = Math.min((now - start) / ms, 1);
     const eased = 1 - Math.pow(1 - t, 3);
-    el.textContent = `${Math.round(to * eased)}%`;
-    if (t < 1) requestAnimationFrame(tick);
+    el.textContent = `${Math.round(from + (to - from) * eased)}%`;
+    if (t < 1) el._countRaf = requestAnimationFrame(tick);
   }
-  requestAnimationFrame(tick);
+  el._countRaf = requestAnimationFrame(tick);
 }
 
 // Point-estimate "time to limit" prediction removed 2026-09-10: it fit a line
@@ -195,14 +206,14 @@ async function render(isRefresh) {
     if (barTrack) barTrack.setAttribute('aria-valuenow', pct);
 
     // Animated bar — FILLS with % used, colored by state.
+    // No reset-to-0-then-refill: setting scaleX(0) and back two frames later
+    // just made Chrome reverse the in-flight transition, so the bar never
+    // actually returned to zero — it only ever crawled by the delta while
+    // the number restarted from 0 beside it. Let the transition run from
+    // wherever the bar is, which on first render is 0 anyway.
     const bf = $('barFill');
-    bf.style.transform = 'scaleX(0)';
     bf.style.backgroundColor = st === 'bad' ? 'var(--danger)' : st === 'warn' ? 'var(--warning)' : 'var(--success)';
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        bf.style.transform = `scaleX(${pct / 100})`;
-      });
-    });
+    bf.style.transform = `scaleX(${pct / 100})`;
 
     const rt = resetTime(f5?.resets_at);
     $('meterCountdown').textContent = rt ? `resets in ${rt}` : '';
