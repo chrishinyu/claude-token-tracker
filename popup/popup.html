@@ -475,13 +475,22 @@ body {
 }
 .spark-bar.rise { animation: barRise var(--dur-base) var(--ease-out) forwards; }
 .spark-bar:hover { opacity: 0.8; }
-/* "Today" is a position on the axis, not a state. It used to be drawn in
-   --info (#5db8a6), a green a half-step from --success (#5db872) — so the
-   line under the last column read as "this day is fine" rather than "this
-   day is now". Green, amber and red are spent on the quota ramp and
-   nothing else; a positional marker gets neutral. */
+/* Neither "today" nor "selected" is a quota state, so neither gets a hue.
+   Today used to be --info (#5db8a6), a green a half-step from --success
+   (#5db872), so the line under the last column read as "this day is fine"
+   rather than "this day is now"; selected used to be coral. Both are
+   neutral now, and they stay apart by SHAPE rather than colour — today is
+   an underline welded to the axis, selected is an outline enclosing the
+   whole bar. Green, amber and red are spent on the quota ramp and nothing
+   else, in every part of this popup. */
 .spark-bar.today { border-bottom: 2px solid var(--text-primary); }
-.spark-bar.selected { outline: 1px solid var(--coral); outline-offset: 1px; }
+.spark-bar.selected { outline: 1px solid var(--text-primary); outline-offset: 1px; }
+/* The bars are role=button tabindex=0 but had no focus style at all, so
+   until now keyboard users had nothing to follow. Coral is what this file
+   already reserves for focus, and with selection neutral it no longer
+   competes: coral means "the keyboard is here", white means "this day is
+   open". Wider offset so both can be read at once on the same bar. */
+.spark-bar:focus-visible { outline: 2px solid var(--coral); outline-offset: 3px; }
 .spark-bar.no-data {
   background: var(--hairline-soft); opacity: 0.3;
   border: 1px dashed var(--hairline); border-bottom: none;
@@ -492,12 +501,12 @@ body {
   flex: 1; text-align: center;
   font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
 }
+/* Labels follow the bars: neutral, separated by weight rather than hue.
+   The bar's outline is the load-bearing selection signal — the label just
+   has to not contradict it. `selected` comes second so it wins the weight
+   when a day is both. */
 .spark-days span.today { color: var(--text-primary); font-weight: 500; }
-/* Selection stays coral: it's the brand accent already carrying
-   interactive/focus/current everywhere else (hourly bars, focus rings),
-   and it sits outside the quota ramp, so it can't be misread as a state.
-   `selected` comes second so it wins when a day is both. */
-.spark-days span.selected { color: var(--coral); }
+.spark-days span.selected { color: var(--text-primary); font-weight: 600; }
 
 .trend-stats {
   display: flex; gap: var(--sp-3); margin-top: var(--sp-2);
