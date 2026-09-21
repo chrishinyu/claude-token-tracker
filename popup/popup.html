@@ -54,7 +54,9 @@
   --warning:         #e0a83a;   /* nudged brighter — "getting tight" caution */
   --danger:          #e5484d;   /* a real alarm red — "near limit", distinct from warning */
   --danger-soft:     rgba(229,72,77,0.12);
-  --info:            #5db8a6;
+  /* --info (#5db8a6) removed 2026-09-20: its only two uses were the
+     "today" markers, and a green that close to --success read as a quota
+     state. Nothing else referenced it. */
 
   --oauth:   #e8a55a;   /* extra-credits accent (still in use) */
 
@@ -274,6 +276,13 @@ body {
   font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
   margin-top: var(--sp-4);
 }
+/* Same ramp as the hero number (see stateFor() in popup.js), so 7d reads
+   with the same vocabulary. Only the figure is coloured — the "7d" and
+   "used" around it stay faint, so the CONTEXT zone keeps its weight. */
+.meter-foot .stat-pct      { color: var(--text-secondary); }
+.meter-foot .stat-pct.ok   { color: var(--success); }
+.meter-foot .stat-pct.warn { color: var(--warning); }
+.meter-foot .stat-pct.bad  { color: var(--danger); }
 .meter-updated {
   font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
   margin-top: var(--sp-1);
@@ -466,7 +475,12 @@ body {
 }
 .spark-bar.rise { animation: barRise var(--dur-base) var(--ease-out) forwards; }
 .spark-bar:hover { opacity: 0.8; }
-.spark-bar.today { border-bottom: 2px solid var(--info); }
+/* "Today" is a position on the axis, not a state. It used to be drawn in
+   --info (#5db8a6), a green a half-step from --success (#5db872) — so the
+   line under the last column read as "this day is fine" rather than "this
+   day is now". Green, amber and red are spent on the quota ramp and
+   nothing else; a positional marker gets neutral. */
+.spark-bar.today { border-bottom: 2px solid var(--text-primary); }
 .spark-bar.selected { outline: 1px solid var(--coral); outline-offset: 1px; }
 .spark-bar.no-data {
   background: var(--hairline-soft); opacity: 0.3;
@@ -478,7 +492,11 @@ body {
   flex: 1; text-align: center;
   font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
 }
-.spark-days span.today { color: var(--info); font-weight: 500; }
+.spark-days span.today { color: var(--text-primary); font-weight: 500; }
+/* Selection stays coral: it's the brand accent already carrying
+   interactive/focus/current everywhere else (hourly bars, focus rings),
+   and it sits outside the quota ramp, so it can't be misread as a state.
+   `selected` comes second so it wins when a day is both. */
 .spark-days span.selected { color: var(--coral); }
 
 .trend-stats {

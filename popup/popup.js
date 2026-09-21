@@ -11,6 +11,13 @@ function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function normUtil(v) { return v == null ? 0 : Math.min(v >= 1.5 ? v / 100 : v, 1); }
 
+// The one definition of the state ramp. Ruled 2026-09-20: green 0-59
+// "Plenty left", amber 60-69 "Getting tight", red 70+ "Near limit". Both
+// the 5-hour hero and the 7-day foot figure read through this, so the
+// colour means the same thing everywhere it appears — a green number is
+// always "fine", never "this one is selected".
+function stateFor(pct) { return pct >= 70 ? 'bad' : pct >= 60 ? 'warn' : 'ok'; }
+
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
@@ -188,7 +195,7 @@ async function render(isRefresh) {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 70 ? 'bad' : pct >= 60 ? 'warn' : 'ok';
+    const st = stateFor(pct);
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
 
     const mv = $('meterVal');
@@ -220,9 +227,18 @@ async function render(isRefresh) {
 
     // Foot: 5-hour window label + weekly usage, both in "% used".
     $('statUsed').textContent = '5-hour window';
+    // 7-day figure carries the same colour coding as the hero, through the
+    // same stateFor() — but only the number is coloured, and it stays at the
+    // foot's 11px. The CONTEXT zone keeps its quiet weight; what changes is
+    // that the colour now means the same thing in both places.
     const u7 = usage.seven_day?.utilization;
     const pct7 = u7 != null ? Math.min(Math.round(normUtil(u7) * 100), 100) : null;
-    $('statLeft').textContent = pct7 != null ? `7d ${pct7}% used` : '';
+    const sl = $('statLeft');
+    if (pct7 != null) {
+      sl.innerHTML = `7d <span class="stat-pct ${stateFor(pct7)}">${pct7}%</span> used`;
+    } else {
+      sl.textContent = '';
+    }
 
     // Advisory — plain text, no card. The one piece of real advice, and it
     // only applies near the limit.
@@ -382,8 +398,10 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
 
     const lbl = document.createElement('span');
     lbl.textContent = dayLabel(d.day);
-    if (isToday) lbl.className = 'today';
-    if (isSel) lbl.className = 'selected';
+    // Two independent facts, so classList.add — plain className assignment
+    // meant a day that was both today AND selected silently lost `today`.
+    if (isToday) lbl.classList.add('today');
+    if (isSel) lbl.classList.add('selected');
     daysEl.appendChild(lbl);
   });
 
@@ -733,7 +751,7 @@ async function renderFromStorage() {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 70 ? 'bad' : pct >= 60 ? 'warn' : 'ok';
+    const st = stateFor(pct);
 
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
     { const mvd = $("meterVerdict"); if (mvd) mvd.textContent = verdict; }
@@ -751,9 +769,18 @@ async function renderFromStorage() {
 
     $('meterCountdown').textContent = '';
     $('statUsed').textContent = '5-hour window';
+    // 7-day figure carries the same colour coding as the hero, through the
+    // same stateFor() — but only the number is coloured, and it stays at the
+    // foot's 11px. The CONTEXT zone keeps its quiet weight; what changes is
+    // that the colour now means the same thing in both places.
     const u7 = usage.seven_day?.utilization;
     const pct7 = u7 != null ? Math.min(Math.round(normUtil(u7) * 100), 100) : null;
-    $('statLeft').textContent = pct7 != null ? `7d ${pct7}% used` : '';
+    const sl = $('statLeft');
+    if (pct7 != null) {
+      sl.innerHTML = `7d <span class="stat-pct ${stateFor(pct7)}">${pct7}%</span> used`;
+    } else {
+      sl.textContent = '';
+    }
 
     renderWeeklyTrend(allSnapshots, usage);
     staggerReveal();
