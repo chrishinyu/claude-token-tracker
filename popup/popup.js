@@ -397,7 +397,7 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
       const installDateStr = new Date(installDate).toLocaleDateString([], { month: 'short', day: 'numeric' });
       statsHtml = `<span><span class="label">Tracking since ${escapeHtml(installDateStr)}</span></span>`;
     } else {
-      statsHtml = `<span><span class="label">Collecting data — bars fill as polls accumulate</span></span>`;
+      statsHtml = `<span><span class="label">Collecting data. Bars fill as polls accumulate.</span></span>`;
     }
   } else {
     statsHtml = `<span><span class="label">Avg: </span><span class="val">${avgPct}%</span></span>`;
@@ -416,9 +416,9 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
 
     if (heaviest) {
       if (avgWd > avgWe * 2 && weekends.length > 0) {
-        insightEl.textContent = `Usage peaks on weekdays — heaviest ${dayName(heaviest.day)} at ${heaviest.pct}%`;
+        insightEl.textContent = `Usage peaks on weekdays. Heaviest: ${dayName(heaviest.day)} at ${heaviest.pct}%`;
       } else {
-        insightEl.textContent = `Heaviest on ${dayName(heaviest.day)} — ${heaviest.pct}% peak`;
+        insightEl.textContent = `Heaviest on ${dayName(heaviest.day)}: ${heaviest.pct}% peak`;
       }
       insightEl.hidden = false;
     } else {
@@ -474,7 +474,7 @@ function renderDayDetail(day, snapshots) {
     const barClass = val > 0 ? ' active' : '';
     const riseClass = !prefersReducedMotion ? ' rise' : '';
     const delayStyle = !prefersReducedMotion ? `animation-delay:${h * 20}ms;` : '';
-    html += `<div class="hourly-bar${barClass}${riseClass}" style="height:${ht}%;${delayStyle}" title="${h}:00 — ${Math.round(val * 100)}%"></div>`;
+    html += `<div class="hourly-bar${barClass}${riseClass}" style="height:${ht}%;${delayStyle}" title="${h}:00 · ${Math.round(val * 100)}%"></div>`;
   }
 
   html += `</div>

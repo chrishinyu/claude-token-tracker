@@ -159,7 +159,7 @@ async function checkThresholds(usage) {
       chrome.notifications.create(`tt-threshold-${t}`, {
         type: 'basic', iconUrl: 'assets/icons/icon128.png',
         title: `Claude usage at ${pct}%`,
-        message: t >= 95 ? 'Near limit — save heavy tasks for after reset' :
+        message: t >= 95 ? 'Near limit. Save heavy tasks for after reset.' :
           resetStr ? `Resets in ${resetStr}` : 'Consider switching to a lighter model'
       });
       await chrome.storage.local.set({ last_notified_pct: pct });
