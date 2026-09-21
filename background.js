@@ -421,7 +421,10 @@ async function updateBadge(usage) {
   }
   const pct = Math.min(Math.round(util * 100), 100);
   const text = pct >= 100 ? '!' : `${pct}%`;
-  const color = pct >= 90 ? '#A32D2D' : pct >= 70 ? '#BA7517' : '#3B6D11';
+  // Same ramp as the popup (stateFor() in popup.js), ruled 2026-09-20:
+  // red 70+, amber 60-69, green below. These were left at 90/70 when the
+  // popup moved, so the badge stayed green while the popup said Near limit.
+  const color = pct >= 70 ? '#A32D2D' : pct >= 60 ? '#BA7517' : '#3B6D11';
   await chrome.action.setBadgeText({ text });
   await chrome.action.setBadgeBackgroundColor({ color });
 }
