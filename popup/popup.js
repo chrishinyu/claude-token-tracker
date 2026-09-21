@@ -7,7 +7,16 @@
 
 const $ = id => document.getElementById(id);
 
+function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 function normUtil(v) { return v == null ? 0 : Math.min(v >= 1.5 ? v / 100 : v, 1); }
+
+// The one definition of the state ramp. Ruled 2026-09-20: green 0-59
+// "Plenty left", amber 60-69 "Getting tight", red 70+ "Near limit". Both
+// the 5-hour hero and the 7-day foot figure read through this, so the
+// colour means the same thing everywhere it appears — a green number is
+// always "fine", never "this one is selected".
+function stateFor(pct) { return pct >= 70 ? 'bad' : pct >= 60 ? 'warn' : 'ok'; }
 
 function escapeHtml(str) {
   const div = document.createElement('div');
@@ -80,6 +89,34 @@ const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)
 // (it opens dozens of times a day; a staggered load makes every open feel
 // slower). Kept as a harmless no-op so the call sites don't need touching.
 function staggerReveal() {}
+
+// Counts an element's text from its CURRENT value to `to`, eased to match
+// --ease-out (cubic-bezier(0.16,1,0.3,1) — no native JS equivalent,
+// easeOutCubic is a close stand-in) over the same window as the bar-fill's
+// own CSS transition, so the number and the bar read as one animated fact
+// rather than a static number next to a moving bar.
+//
+// Counting from the current value, not from 0, is the whole point: the bar
+// is a CSS transition, which always interpolates from wherever it already
+// is. A count that restarted at 0 on every refresh diverged visibly from a
+// bar that barely moved (verified in Chrome: mid-refresh the number read
+// 53% next to a bar sitting at 73%). Same rule as the bar now — on first
+// open the current value is 0 so the intro still counts all the way up; on
+// a refresh that didn't move the needle, neither of them moves, which is
+// the honest signal.
+function animateCount(el, to, ms = 200) {
+  const from = parseInt(el.textContent, 10) || 0;
+  if (prefersReducedMotion || from === to) { el.textContent = `${to}%`; return; }
+  cancelAnimationFrame(el._countRaf);
+  const start = performance.now();
+  function tick(now) {
+    const t = Math.min((now - start) / ms, 1);
+    const eased = 1 - Math.pow(1 - t, 3);
+    el.textContent = `${Math.round(from + (to - from) * eased)}%`;
+    if (t < 1) el._countRaf = requestAnimationFrame(tick);
+  }
+  el._countRaf = requestAnimationFrame(tick);
+}
 
 // Point-estimate "time to limit" prediction removed 2026-09-10: it fit a line
 // through as few as 2 snapshots in a bursty signal — a confident number with
@@ -158,12 +195,16 @@ async function render(isRefresh) {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : 'ok';
+    const st = stateFor(pct);
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
 
     const mv = $('meterVal');
     mv.className = `meter-val ${st}`;
-    mv.textContent = `${pct}%`;
+    // Counts up 0→pct in step with the bar's own fill transition (same
+    // 200ms/ease-out) rather than snapping to text — the two are reading
+    // the same fact and should move as one, not one animating while the
+    // other just appears.
+    animateCount(mv, pct);
 
     $("meterVerdict").textContent = verdict;
 
@@ -172,23 +213,32 @@ async function render(isRefresh) {
     if (barTrack) barTrack.setAttribute('aria-valuenow', pct);
 
     // Animated bar — FILLS with % used, colored by state.
+    // No reset-to-0-then-refill: setting scaleX(0) and back two frames later
+    // just made Chrome reverse the in-flight transition, so the bar never
+    // actually returned to zero — it only ever crawled by the delta while
+    // the number restarted from 0 beside it. Let the transition run from
+    // wherever the bar is, which on first render is 0 anyway.
     const bf = $('barFill');
-    bf.style.transform = 'scaleX(0)';
     bf.style.backgroundColor = st === 'bad' ? 'var(--danger)' : st === 'warn' ? 'var(--warning)' : 'var(--success)';
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        bf.style.transform = `scaleX(${pct / 100})`;
-      });
-    });
+    bf.style.transform = `scaleX(${pct / 100})`;
 
     const rt = resetTime(f5?.resets_at);
     $('meterCountdown').textContent = rt ? `resets in ${rt}` : '';
 
     // Foot: 5-hour window label + weekly usage, both in "% used".
     $('statUsed').textContent = '5-hour window';
+    // 7-day figure carries the same colour coding as the hero, through the
+    // same stateFor() — but only the number is coloured, and it stays at the
+    // foot's 11px. The CONTEXT zone keeps its quiet weight; what changes is
+    // that the colour now means the same thing in both places.
     const u7 = usage.seven_day?.utilization;
     const pct7 = u7 != null ? Math.min(Math.round(normUtil(u7) * 100), 100) : null;
-    $('statLeft').textContent = pct7 != null ? `7d ${pct7}% used` : '';
+    const sl = $('statLeft');
+    if (pct7 != null) {
+      sl.innerHTML = `7d <span class="stat-pct ${stateFor(pct7)}">${pct7}%</span> used`;
+    } else {
+      sl.textContent = '';
+    }
 
     // Advisory — plain text, no card. The one piece of real advice, and it
     // only applies near the limit.
@@ -348,8 +398,10 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
 
     const lbl = document.createElement('span');
     lbl.textContent = dayLabel(d.day);
-    if (isToday) lbl.className = 'today';
-    if (isSel) lbl.className = 'selected';
+    // Two independent facts, so classList.add — plain className assignment
+    // meant a day that was both today AND selected silently lost `today`.
+    if (isToday) lbl.classList.add('today');
+    if (isSel) lbl.classList.add('selected');
     daysEl.appendChild(lbl);
   });
 
@@ -374,7 +426,7 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
       const installDateStr = new Date(installDate).toLocaleDateString([], { month: 'short', day: 'numeric' });
       statsHtml = `<span><span class="label">Tracking since ${escapeHtml(installDateStr)}</span></span>`;
     } else {
-      statsHtml = `<span><span class="label">Collecting data — bars fill as polls accumulate</span></span>`;
+      statsHtml = `<span><span class="label">Collecting data. Bars fill as polls accumulate.</span></span>`;
     }
   } else {
     statsHtml = `<span><span class="label">Avg: </span><span class="val">${avgPct}%</span></span>`;
@@ -393,9 +445,9 @@ function renderWeeklyTrend(snapshots, usage, skipAnim) {
 
     if (heaviest) {
       if (avgWd > avgWe * 2 && weekends.length > 0) {
-        insightEl.textContent = `Usage peaks on weekdays — heaviest ${dayName(heaviest.day)} at ${heaviest.pct}%`;
+        insightEl.textContent = `Usage peaks on weekdays. Heaviest: ${dayName(heaviest.day)} at ${heaviest.pct}%`;
       } else {
-        insightEl.textContent = `Heaviest on ${dayName(heaviest.day)} — ${heaviest.pct}% peak`;
+        insightEl.textContent = `Heaviest on ${dayName(heaviest.day)}: ${heaviest.pct}% peak`;
       }
       insightEl.hidden = false;
     } else {
@@ -451,7 +503,7 @@ function renderDayDetail(day, snapshots) {
     const barClass = val > 0 ? ' active' : '';
     const riseClass = !prefersReducedMotion ? ' rise' : '';
     const delayStyle = !prefersReducedMotion ? `animation-delay:${h * 20}ms;` : '';
-    html += `<div class="hourly-bar${barClass}${riseClass}" style="height:${ht}%;${delayStyle}" title="${h}:00 — ${Math.round(val * 100)}%"></div>`;
+    html += `<div class="hourly-bar${barClass}${riseClass}" style="height:${ht}%;${delayStyle}" title="${h}:00 · ${Math.round(val * 100)}%"></div>`;
   }
 
   html += `</div>
@@ -515,17 +567,69 @@ $('notifyToggle').addEventListener('change', e => {
   sendMsg({ action: 'SET_NOTIFY_SETTING', enabled: e.target.checked });
 });
 
+// Two tiers of refresh feedback, two classes:
+//   .refreshing    — header spin + meter shimmer + content dim. Goes on
+//                    immediately on click, every time, fast or slow. This
+//                    is the cheap always-on acknowledgment ("your click
+//                    registered").
+//   .loading-mode  — the full-screen blink-eye overlay. NOT immediate: a
+//                    delayed-reveal pattern (same logic as GitHub/Stripe's
+//                    ~300ms spinner threshold), so a normal fast refresh
+//                    (the common case, checked dozens of times a day)
+//                    never pays a ceremony tax. Only a refresh that's
+//                    genuinely still running past OVERLAY_DELAY_MS earns
+//                    the takeover — and once it does, it plays one full,
+//                    uncut 2s cycle (open→close→open, holds on the open
+//                    frame via fill:forwards) before the reveal, so a
+//                    blink that started never gets cut off mid-close by
+//                    data arriving a beat later.
+const OVERLAY_DELAY_MS = 180;   // don't show the overlay for anything faster than this
+const BLINK_DURATION_MS = 2200; // eyeOpen/eyeClosed's own 2s + a small settle buffer
+
 $('btnRefresh').addEventListener('click', async () => {
-  // The spinner is driven by the body `.refreshing` class (added/removed by
-  // render(true)), so it loops for the real duration of the fetch instead of a
-  // fixed 500ms. `disabled` guards against double-fire.
+  // `.refreshing` goes on BEFORE the REFRESH message — that network
+  // round-trip is the actual slow part; render()'s own add() used to fire
+  // after it had already finished, so the class was only ever true for the
+  // few ms of the local-storage reads inside render(), and nothing ever
+  // visibly showed. render(false) here means this handler is the sole
+  // owner of both classes now. `disabled` guards against double-fire —
+  // each click is a fresh, deliberate request, so there's no separate
+  // replay-cooldown beyond that.
   const b = $('btnRefresh');
   if (b.disabled) return;
   b.disabled = true;
+  document.body.classList.add('refreshing');
+
+  let overlayShownAt = 0;
+  const overlayTimer = setTimeout(() => {
+    overlayShownAt = Date.now();
+    document.body.classList.add('loading-mode');
+  }, OVERLAY_DELAY_MS);
+
   try {
     await sendMsg({ action: 'REFRESH' });
-    await render(true);
+    clearTimeout(overlayTimer);
+    if (overlayShownAt) {
+      // The overlay actually appeared — let its blink finish the cycle
+      // it's already mid-way through rather than yanking it away early.
+      const remaining = BLINK_DURATION_MS - (Date.now() - overlayShownAt);
+      if (remaining > 0) await wait(remaining);
+      // Remove the class AND populate the data in the same breath: the
+      // iris-reveal mask starts opening right as render() kicks off the
+      // bar-fill transition and number count-up, so the user watches the
+      // numbers actually grow into place as the popup uncovers — not a
+      // reveal of numbers that finished animating, unseen, under an
+      // opaque overlay a moment earlier.
+      document.body.classList.remove('loading-mode');
+      await render(false);
+    } else {
+      // Fast path: the overlay never appeared, nothing to sync the reveal
+      // against — just populate immediately.
+      await render(false);
+    }
   } finally {
+    clearTimeout(overlayTimer);
+    document.body.classList.remove('refreshing', 'loading-mode');
     b.disabled = false;
   }
 });
@@ -647,7 +751,7 @@ async function renderFromStorage() {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 90 ? 'bad' : pct >= 70 ? 'warn' : 'ok';
+    const st = stateFor(pct);
 
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
     { const mvd = $("meterVerdict"); if (mvd) mvd.textContent = verdict; }
@@ -665,9 +769,18 @@ async function renderFromStorage() {
 
     $('meterCountdown').textContent = '';
     $('statUsed').textContent = '5-hour window';
+    // 7-day figure carries the same colour coding as the hero, through the
+    // same stateFor() — but only the number is coloured, and it stays at the
+    // foot's 11px. The CONTEXT zone keeps its quiet weight; what changes is
+    // that the colour now means the same thing in both places.
     const u7 = usage.seven_day?.utilization;
     const pct7 = u7 != null ? Math.min(Math.round(normUtil(u7) * 100), 100) : null;
-    $('statLeft').textContent = pct7 != null ? `7d ${pct7}% used` : '';
+    const sl = $('statLeft');
+    if (pct7 != null) {
+      sl.innerHTML = `7d <span class="stat-pct ${stateFor(pct7)}">${pct7}%</span> used`;
+    } else {
+      sl.textContent = '';
+    }
 
     renderWeeklyTrend(allSnapshots, usage);
     staggerReveal();

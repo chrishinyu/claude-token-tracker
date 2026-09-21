@@ -54,7 +54,9 @@
   --warning:         #e0a83a;   /* nudged brighter — "getting tight" caution */
   --danger:          #e5484d;   /* a real alarm red — "near limit", distinct from warning */
   --danger-soft:     rgba(229,72,77,0.12);
-  --info:            #5db8a6;
+  /* --info (#5db8a6) removed 2026-09-20: its only two uses were the
+     "today" markers, and a green that close to --success read as a quota
+     state. Nothing else referenced it. */
 
   --oauth:   #e8a55a;   /* extra-credits accent (still in use) */
 
@@ -119,11 +121,45 @@ body {
     animation-iteration-count: 1 !important;
     transition-property: opacity, background-color, color, fill, stroke !important;
   }
+  /* The iris-reveal mask isn't in that allowed list (it's spatial, not
+     opacity/colour), so without an explicit fallback it would hard-snap
+     instead of transitioning at all. apple-design §14: replace the
+     spring/wipe with a short opacity cross-fade, not nothing. */
+  .refresh-overlay {
+    /* !important because the base .refresh-overlay rule further down the
+       sheet has equal specificity and would otherwise win on source order,
+       leaving the mask live and hard-snapping — verified in Chrome. */
+    mask-image: none !important; -webkit-mask-image: none !important;
+    opacity: 0; transition: opacity 150ms ease !important;
+  }
+  .loading-mode .refresh-overlay { opacity: 1; }
 }
 
 /* Refresh feedback: a hairline shimmer on the top edge of the tile, not a
-   full-content dim (dimming the data you came to read is user-hostile). */
+   full-content dim (dimming the data you came to read is user-hostile). The
+   sweep names one moment — "fresh data is being fetched right now" — and
+   rides the same edge the meter tile already foregrounds with its border. */
 .refreshing .content { opacity: 0.85; transition: opacity var(--dur-fast) ease; }
+#meterTile { position: relative; overflow: hidden; }
+#meterTile::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--text-faint), transparent);
+  transform: translateX(-100%);
+  opacity: 0; pointer-events: none;
+}
+.refreshing #meterTile::before {
+  opacity: 1;
+  animation: shimmerSweep 1.1s ease-in-out infinite;
+}
+/* Once the loading-mode overlay is up it's sitting at 92% opacity right on
+   top of this (and the header spinner) — pause both rather than let them
+   burn cycles doing invisible work underneath a takeover. */
+.loading-mode #meterTile::before,
+.loading-mode #btnRefresh svg { animation-play-state: paused; }
+@keyframes shimmerSweep {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
 
 /* ── Header ──
    Chrome, not a card: it shares the page fill (--surface-body) and has no
@@ -240,9 +276,145 @@ body {
   font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
   margin-top: var(--sp-4);
 }
+/* Same ramp as the hero number (see stateFor() in popup.js), so 7d reads
+   with the same vocabulary. Only the figure is coloured — the "7d" and
+   "used" around it stay faint, so the CONTEXT zone keeps its weight. */
+.meter-foot .stat-pct      { color: var(--text-secondary); }
+.meter-foot .stat-pct.ok   { color: var(--success); }
+.meter-foot .stat-pct.warn { color: var(--warning); }
+.meter-foot .stat-pct.bad  { color: var(--danger); }
 .meter-updated {
   font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
   margin-top: var(--sp-1);
+}
+
+/* ── Refresh loading mode ──
+   A centered overlay, not an icon — the blink art (Figma node 7584:2) only
+   reads as a face at ~32-40px+; at icon scale it collapses to a grey smear
+   (verified by rendering both).
+
+   Gated on its OWN class, `.loading-mode` — deliberately separate from
+   `.refreshing` (which still drives the header spin + shimmer + content dim
+   immediately on every click, fast or slow). `.loading-mode` only gets
+   added if the fetch is still running after a short delay (see popup.js) —
+   a delayed-reveal pattern (same logic as GitHub/Stripe's ~300ms spinner
+   threshold): most refreshes are fast and get instant ambient feedback with
+   no ceremony; only a genuinely slow one earns the full-screen blink. Once
+   it IS up, it's the loud signal and the header spin/shimmer underneath it
+   are paused (see `.loading-mode #meterTile::before` etc above) rather than
+   burning cycles invisibly under a 92%-opaque takeover.
+
+   Two flattened SVGs (open/closed) crossfade rather than animating 15 live
+   layers — cheaper to ship and more interruptible. Same 0/23.3/40/48.3/
+   66.7/100% beats as the source file — only the duration (2s, was 3s)
+   changed, so the choreography is unaltered.
+
+   Plays ONCE (not looping) and holds on the open-eye frame at the end —
+   popup.js pins the overlay's visible window to the animation's own length,
+   so a blink that started never gets cut off mid-cycle by data arriving.
+   No caption: the motion IS the message here, a label next to it would be
+   redundant and just compete with a 72px illustration for the eye.
+
+   Enter/exit are deliberately asymmetric (Emil Kowalski's rule: matching
+   curves both ways reads as mushy) — arriving is a strong ease-out (fast,
+   intentional arrival), the base rule below governs leaving with an
+   ease-in curve instead, so the reveal underneath feels crisp, not trailed
+   off. Each click is a new deliberate user action (button is `disabled`
+   for the whole operation) so there's no separate replay-cooldown — a
+   second refresh right after the first is always a fresh, intentional ask,
+   not ambient repetition. */
+/* Iris reveal: the overlay doesn't fade out flat, it recedes as a hole
+   opening at its own center (where the eye already sits, so the wipe is
+   anchored to the thing the user was just looking at — apple-design §7,
+   motion originates from the focal point) and growing outward until the
+   whole popup is uncovered. Driven by --reveal, the transparent disk's
+   radius in a radial-gradient mask: 0px = disk is a pinpoint = overlay
+   fully opaque/visible; past the popup's own diagonal = disk swallows
+   everything = overlay fully invisible. @property registers it so the
+   browser tweens the radius continuously instead of snapping (custom
+   properties don't interpolate by default). */
+@property --reveal {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 600px;
+}
+.refresh-overlay {
+  position: fixed; inset: 0; z-index: 5;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--surface-body) 92%, transparent);
+  backdrop-filter: blur(0px);
+  pointer-events: none;
+  --reveal: 600px; /* hidden at rest: disk covers the full popup */
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent var(--reveal), #000 calc(var(--reveal) + 1px));
+          mask-image: radial-gradient(circle at 50% 50%, transparent var(--reveal), #000 calc(var(--reveal) + 1px));
+  /* exit: the hole grows back open, slower and eased so the reveal reads
+     as deliberate, not a snap; blur recedes with it (apple-design §12) */
+  transition: --reveal 380ms cubic-bezier(0.4, 0, 0.2, 1), backdrop-filter 260ms cubic-bezier(0.4, 0, 1, 1);
+}
+.loading-mode .refresh-overlay {
+  pointer-events: auto; backdrop-filter: blur(6px);
+  --reveal: 0px; /* shown: the hole closes to a pinpoint, overlay fully covers */
+  transition: --reveal 200ms cubic-bezier(0.23, 1, 0.32, 1), backdrop-filter 200ms cubic-bezier(0.23, 1, 0.32, 1); /* enter: strong ease-out */
+}
+.refresh-overlay-eye {
+  position: relative; width: 72px; height: 67px; flex: none;
+  /* Never animate in from scale(0) or from full-size flat — a small
+     settle-in gives the eye a beat of arrival instead of just appearing
+     with the scrim. */
+  transform: scale(0.94);
+  transition: transform 200ms cubic-bezier(0.4, 0, 1, 1);
+}
+.loading-mode .refresh-overlay-eye {
+  transform: scale(1);
+  transition: transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.refresh-overlay-eye img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.refresh-overlay-eye .eye-closed { opacity: 0; }
+/* Timing-function per keyframe stop, not a flat curve on the whole
+   animation (apple-design + Emil: matched curves both directions read
+   mechanical) — restored from the source file's own per-segment easing
+   (get_motion_context), which we'd flattened to linear earlier and lost the
+   feel of a real blink. Closing (23.3%→40%) is a decisive snap-shut
+   (cubic-bezier(.3,0,.8,1), accelerating into the close); opening
+   (48.3%→66.7%) is a soft settle (cubic-bezier(0,0,.15,1), decelerating
+   into the held-open frame) — exactly how a real blink moves: quick down,
+   gentle up. */
+.loading-mode .refresh-overlay-eye .eye-open   { animation: eyeOpen 2s ease 1 forwards; }
+.loading-mode .refresh-overlay-eye .eye-closed { animation: eyeClosed 2s ease 1 forwards; }
+/* Sparkle: a plain glow, not the source sparkle asset — that shape only
+   resolves at a size this overlay isn't spending on a secondary accent.
+   Positioned ON the pupil (inner-pupil center in the source file's own
+   300×280 space is (150,155); scaled into this 72×67 box that's (36,37))
+   so it reads as a catch-light glinting on the eye itself once it reopens,
+   not a stray accent floating near the lashes. Ends at opacity 0
+   (fill:forwards) — it pulses once at the reopen beat and stays gone, it
+   doesn't rest on a visible final frame like the eye does. */
+.refresh-overlay-eye::after {
+  content: ""; position: absolute; top: 37px; left: 36px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--text-primary); opacity: 0;
+  box-shadow: 0 0 6px 1px var(--text-primary);
+  transform: translate(-50%, -50%) scale(0.3);
+}
+.loading-mode .refresh-overlay-eye::after { animation: eyeSparkle 2s ease 1 forwards; }
+@keyframes eyeOpen {
+  0% { opacity: 1; }
+  23.333% { opacity: 1; animation-timing-function: cubic-bezier(0.3, 0, 0.8, 1); }
+  40% { opacity: 0; }
+  48.333% { opacity: 0; animation-timing-function: cubic-bezier(0, 0, 0.15, 1); }
+  66.667%, 100% { opacity: 1; }
+}
+@keyframes eyeClosed {
+  0% { opacity: 0; }
+  23.333% { opacity: 0; animation-timing-function: cubic-bezier(0.3, 0, 0.8, 1); }
+  40% { opacity: 1; }
+  48.333% { opacity: 1; animation-timing-function: cubic-bezier(0, 0, 0.15, 1); }
+  66.667%, 100% { opacity: 0; }
+}
+@keyframes eyeSparkle {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+  46.667% { opacity: 0; transform: translate(-50%, -50%) scale(0.3); animation-timing-function: ease-out; }
+  61.667% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); animation-timing-function: ease-in-out; }
+  76.667%, 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.6); }
 }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -303,8 +475,22 @@ body {
 }
 .spark-bar.rise { animation: barRise var(--dur-base) var(--ease-out) forwards; }
 .spark-bar:hover { opacity: 0.8; }
-.spark-bar.today { border-bottom: 2px solid var(--info); }
-.spark-bar.selected { outline: 1px solid var(--coral); outline-offset: 1px; }
+/* Neither "today" nor "selected" is a quota state, so neither gets a hue.
+   Today used to be --info (#5db8a6), a green a half-step from --success
+   (#5db872), so the line under the last column read as "this day is fine"
+   rather than "this day is now"; selected used to be coral. Both are
+   neutral now, and they stay apart by SHAPE rather than colour — today is
+   an underline welded to the axis, selected is an outline enclosing the
+   whole bar. Green, amber and red are spent on the quota ramp and nothing
+   else, in every part of this popup. */
+.spark-bar.today { border-bottom: 2px solid var(--text-primary); }
+.spark-bar.selected { outline: 1px solid var(--text-primary); outline-offset: 1px; }
+/* The bars are role=button tabindex=0 but had no focus style at all, so
+   until now keyboard users had nothing to follow. Coral is what this file
+   already reserves for focus, and with selection neutral it no longer
+   competes: coral means "the keyboard is here", white means "this day is
+   open". Wider offset so both can be read at once on the same bar. */
+.spark-bar:focus-visible { outline: 2px solid var(--coral); outline-offset: 3px; }
 .spark-bar.no-data {
   background: var(--hairline-soft); opacity: 0.3;
   border: 1px dashed var(--hairline); border-bottom: none;
@@ -315,8 +501,12 @@ body {
   flex: 1; text-align: center;
   font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint);
 }
-.spark-days span.today { color: var(--info); font-weight: 500; }
-.spark-days span.selected { color: var(--coral); }
+/* Labels follow the bars: neutral, separated by weight rather than hue.
+   The bar's outline is the load-bearing selection signal — the label just
+   has to not contradict it. `selected` comes second so it wins the weight
+   when a day is both. */
+.spark-days span.today { color: var(--text-primary); font-weight: 500; }
+.spark-days span.selected { color: var(--text-primary); font-weight: 600; }
 
 .trend-stats {
   display: flex; gap: var(--sp-3); margin-top: var(--sp-2);
@@ -437,6 +627,13 @@ body {
 </style>
 </head>
 <body>
+
+<div class="refresh-overlay" aria-hidden="true">
+  <span class="refresh-overlay-eye">
+    <img class="eye-open" src="../assets/icons/eye-open.svg" alt="">
+    <img class="eye-closed" src="../assets/icons/eye-closed.svg" alt="">
+  </span>
+</div>
 
 <header class="header">
   <div class="brand">

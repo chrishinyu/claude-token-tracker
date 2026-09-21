@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Claude Token Tracker",
   "version": "0.5.2",
-  "description": "Track your Claude AI usage like battery life. See quota utilization, per-model breakdowns, and when it resets.",
+  "description": "See how much of your Claude five-hour limit is left, when it resets, and your seven-day trend.",
   "minimum_chrome_version": "109",
   "incognito": "not_allowed",
   "permissions": [

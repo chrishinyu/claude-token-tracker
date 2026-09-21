@@ -180,8 +180,12 @@ emphasis, 600 only for `.sec-h`.
 
 **Deferred (not started):**
 - Val's near-limit hero swap (show the reset *time* big instead of the word when red).
-- Advisory threshold: move the "save heavy tasks" line from >=90% to ~70% (agreed in
-  round 3, not yet done — `st === 'bad'` is still 90 in popup.js).
+- ~~Advisory threshold: move the "save heavy tasks" line from >=90% to ~70%~~ — done
+  2026-09-14, `st === 'bad'` now `pct >= 70` in popup.js (both call sites). The `warn`
+  threshold wasn't specified in the round-3 ruling; it was provisionally moved 70→50,
+  and Christy ruled 60 on 2026-09-20 — a 50% window reading "Getting tight" in amber
+  every session would have spent the signal on a half-full tank. Final: green 0-59,
+  amber 60-69, red 70+. CLOSED.
 - Weekly-trend tile + settings drawer never got the craft/spacing pass the meter tile did.
 - CLI (`tt.js`, `tt-statusline.sh`) unchanged since the round-1 dedupe fix.
 - The 3 old backlog items (badge alternation, CSV export UI, smarter prediction) — all
