@@ -188,7 +188,7 @@ async function render(isRefresh) {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 70 ? 'bad' : pct >= 50 ? 'warn' : 'ok';
+    const st = pct >= 70 ? 'bad' : pct >= 60 ? 'warn' : 'ok';
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
 
     const mv = $('meterVal');
@@ -733,7 +733,7 @@ async function renderFromStorage() {
     const f5 = usage.five_hour;
     const frac = normUtil(f5?.utilization);
     const pct = Math.min(Math.round(frac * 100), 100);
-    const st = pct >= 70 ? 'bad' : pct >= 50 ? 'warn' : 'ok';
+    const st = pct >= 70 ? 'bad' : pct >= 60 ? 'warn' : 'ok';
 
     const verdict = st === 'bad' ? 'Near limit' : st === 'warn' ? 'Getting tight' : 'Plenty left';
     { const mvd = $("meterVerdict"); if (mvd) mvd.textContent = verdict; }
